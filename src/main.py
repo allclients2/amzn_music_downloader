@@ -105,7 +105,7 @@ def main():
     
     try:
         if args.from_browser:
-            print("Loading cookies from browser...")
+            print("loading cookies from browser...")
             cookie_header = Cookies.from_browser(
                 domain="amazon.co.jp",
                 browser=args.browser
@@ -119,25 +119,25 @@ def main():
     content_asin = args.content_asin
     config = Configs.fetch_configs(cookie_header)
 
-    print("Fetching track MPD streams...")
+    print("fetching track MPD streams...")
     manifest_xml = MpdInfo.getTrackInfo(content_asin, config, cookie_header)
     selector = MPDStreamSelector(manifest_xml)
 
     result = selector.select()
 
     if not result:
-        print("No track selection made.")
+        print("no track selection made.")
         return
 
     if args.verbose:
-        print(f"Selected stream: {result}")
+        print(f"selected stream: {result}")
 
     rep = next(
         r for r in selector.representations
         if r["base_url"] == result["base_url"]
     )
 
-    print("Fetching metadata...")
+    print("fetching metadata...")
     metadata = Metadata.getTrackMetadataFromEmbedLink(content_asin)
 
     track_name = metadata["track_name"]
@@ -152,17 +152,15 @@ def main():
     else:
         output_file = Path(args.output_dir) / (output_filename + ".mp4")
 
-    print(f"Output file: {output_file}")
-
-    print("Fetching content keys...")
+    print("fetching content keys...")
     content_key = Keys.getContentKeys(result["pssh"], config, cookie_header)
 
     encrypted_file = Path("encrypted.mp4")
 
-    print("Downloading encrypted file...")
+    print("downloading encrypted file...")
     selector.download_full_file(rep, encrypted_file)
 
-    print("Decrypting...")
+    print("decrypting...")
     unicode_output = output_file
     temp_output = Path("decrypted_temp.mp4")
 
@@ -176,8 +174,11 @@ def main():
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError:
-        print("Decryption failed.")
+        print("decryption failed?")
         return
+    
+
+    print("applying metadata...")
     
     # Download artwork then embed it along with metadata
     artwork_path = "cover.jpg"
@@ -200,7 +201,7 @@ def main():
 
     Metadata2.save_lrc(jsonLyrics, output_filename + ".lrc");
 
-    print(f"Finished! Saved to: {output_file}")
+    print(f"finished, saved to: {output_file}")
 
 
 if __name__ == "__main__":

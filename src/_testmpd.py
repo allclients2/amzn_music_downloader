@@ -8,9 +8,9 @@ selector = MPDStreamSelector(raw_xml);
 result = selector.select();
 
 if result:
-    print("Selected Base URL:");
+    print("selected Base URL:");
     print(result["base_url"]);
-    print("\nAssociated PSSH:");
+    print("\nassociated PSSH:");
     print(result["pssh"]);
 else:
-    print("No selection made.");
+    print("no selection made.");

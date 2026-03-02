@@ -6,6 +6,8 @@ Probably because they all got DMCA'd or something and this will too. Oh well.
 > Amazon.co.jp is extensively used in the code if you're from a different country please change it!
 
 Usage:
+Get a device widevine file and name it as `device.wvd`. Place it into the directory of the repo (not src), then use as follows:
+
 main.py [-h] [-o OUTPUT] [--output-dir OUTPUT_DIR] [--cookies-file COOKIES_FILE] [--keep-encrypted] [-v] [--from-browser]
                [--browser {chrome,edge,firefox}]
                content_asin
