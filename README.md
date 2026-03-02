@@ -10,4 +10,4 @@ main.py [-h] [-o OUTPUT] [--output-dir OUTPUT_DIR] [--cookies-file COOKIES_FILE]
                [--browser {chrome,edge,firefox}]
                content_asin
          
-Example: python src/main.py B07JZ7PW6F --from-browser --browser firefox
+Example:  `python src/main.py B07JZ7PW6F --from-browser --browser firefox`
