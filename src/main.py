@@ -7,13 +7,14 @@ from pathlib import Path
 
 from configs import Configs
 from cookies import Cookies
+from media_utils import MediaUtils
 from keys import Keys
 from metadata import Metadata
 from mpd_info import MpdInfo
 from mpd_selector import MPDStreamSelector
 from cookies import Cookies, CookieError
 from mutagen.mp4 import MP4, MP4Cover
-
+from lyrics import Lyrics
 
 def sanitize_filename(name: str) -> str:
     """Make filename OS safe."""
@@ -21,7 +22,7 @@ def sanitize_filename(name: str) -> str:
 
 
 def build_output_filename(track_name: str, artist_name: str) -> str:
-    filename = f"{track_name} - {artist_name}.mp4"
+    filename = f"{track_name} - {artist_name}"
     return sanitize_filename(filename)
 
 
@@ -101,7 +102,7 @@ def embed_metadata_and_cover(mp4_path: str, image_path: str, metadata: dict):
 
 def main():
     args = parse_args()
-
+    
     try:
         if args.from_browser:
             print("Loading cookies from browser...")
@@ -115,10 +116,11 @@ def main():
         print(str(e))
         return
     
+    content_asin = args.content_asin
     config = Configs.fetch_configs(cookie_header)
 
     print("Fetching track MPD streams...")
-    manifest_xml = MpdInfo.getTrackInfo(args.content_asin, config, cookie_header)
+    manifest_xml = MpdInfo.getTrackInfo(content_asin, config, cookie_header)
     selector = MPDStreamSelector(manifest_xml)
 
     result = selector.select()
@@ -136,18 +138,19 @@ def main():
     )
 
     print("Fetching metadata...")
-    metadata = Metadata.getTrackMetadataFromEmbedLink(args.content_asin)
+    metadata = Metadata.getTrackMetadataFromEmbedLink(content_asin)
 
     track_name = metadata["track_name"]
     artist_name = metadata["artist_name"]
     artwork_url = metadata["artwork_url"]
 
+    output_filename = build_output_filename(track_name, artist_name)
+
     # Determine output file
     if args.output:
         output_file = Path(args.output)
     else:
-        filename = build_output_filename(track_name, artist_name)
-        output_file = Path(args.output_dir) / filename
+        output_file = Path(args.output_dir) / (output_filename + ".mp4")
 
     print(f"Output file: {output_file}")
 
@@ -179,15 +182,23 @@ def main():
     # Download artwork then embed it along with metadata
     artwork_path = "cover.jpg"
     download_artwork(artwork_url, artwork_path)
-
     embed_metadata_and_cover(temp_output, artwork_path, metadata)
-
     os.remove(artwork_path)
+
+    duration = MediaUtils.get_duration_seconds(temp_output)
 
     temp_output.rename(unicode_output)
 
     if not args.keep_encrypted:
         encrypted_file.unlink(missing_ok=True)
+
+    jsonLyrics = Lyrics.fetch_lyrics(
+        track_asin=content_asin,
+        duration=duration,
+        config=config
+    )
+
+    Lyrics.save_lrc(jsonLyrics, output_filename + ".lrc");
 
     print(f"Finished! Saved to: {output_file}")
 
