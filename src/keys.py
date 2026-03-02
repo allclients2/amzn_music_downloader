@@ -80,14 +80,14 @@ class Keys:
 
         base64_challenge = base64.b64encode(challenge).decode("utf-8")
 
-        print("license challenge base64:", base64_challenge)
+        print("license challenge:", base64_challenge)
 
         # send license challenge to bitmovin's license server (which has no auth and asks simply for the license challenge as-is)
         # another license server may require authentication and ask for it as JSON or form data instead
         # you may also be required to use privacy mode, where you use their service certificate when creating the challenge
         license = Keys.getLicense(base64_challenge, config, cookieHeader)
 
-        print("license2:", license)
+        print("got license:", license)
 
         # parse the license response message received from the license server API
         cdm.parse_license(session_id, license)

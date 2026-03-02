@@ -65,8 +65,6 @@ class MpdInfo:
             json=payload
         )
 
-        print("mpd info reponse:", response.text)
-        print("manifest:", response.json()["contentResponseList"][0]["manifest"])
         return response.json()["contentResponseList"][0]["manifest"]
 
 
