@@ -14,7 +14,7 @@ from mpd_info import MpdInfo
 from mpd_selector import MPDStreamSelector
 from cookies import Cookies, CookieError
 from mutagen.mp4 import MP4, MP4Cover
-from lyrics import Lyrics
+from metadata2 import Metadata2
 
 def sanitize_filename(name: str) -> str:
     """Make filename OS safe."""
@@ -142,7 +142,7 @@ def main():
 
     track_name = metadata["track_name"]
     artist_name = metadata["artist_name"]
-    artwork_url = metadata["artwork_url"]
+    artwork_url = Metadata2.fetch_artwork_v2(content_asin, config) or metadata["artwork_url"]
 
     output_filename = build_output_filename(track_name, artist_name)
 
@@ -192,13 +192,13 @@ def main():
     if not args.keep_encrypted:
         encrypted_file.unlink(missing_ok=True)
 
-    jsonLyrics = Lyrics.fetch_lyrics(
+    jsonLyrics = Metadata2.fetch_lyrics(
         track_asin=content_asin,
         duration=duration,
         config=config
     )
 
-    Lyrics.save_lrc(jsonLyrics, output_filename + ".lrc");
+    Metadata2.save_lrc(jsonLyrics, output_filename + ".lrc");
 
     print(f"Finished! Saved to: {output_file}")
 

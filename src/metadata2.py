@@ -1,69 +1,198 @@
-import json
-import requests
 
-url = "https://fe.web.skill.music.a2z.com/api/showLyrics"
+import json;
+import uuid;
+import requests;
+import time;
 
-headers = {
-    "Content-Type": "application/json;charset=UTF-8",
-    "Origin": "https://music.amazon.co.jp",
-    "Referer": "https://music.amazon.co.jp/",
-    "User-Agent": "Mozilla/5.0",
-}
 
-# 1️⃣ Authentication JSON (must be stringified later)
-auth_obj = {
-    "interface": "ClientAuthenticationInterface.v1_0.ClientTokenElement",
-    "accessToken": "Atna|EwMDIN31zRahEXqkxAeTd7tr1gNKomvuLeO9wHZeN4vJZuHmEp-oIGvccv-PJDwKiSwFI22pycxrZM55jZVUOchMtTiQVjc-jsH_fB0Qwug2B3Y-JX-Rl9RKhwfsOtfuv7PwuyHC2lfKjr08m3Hjgo7pngJQtabGsURUKzaNXkWSoK_bdMG6C5X1SMFKxpiyDgy573WLfBdSo9--8rVcQ9Fi5yk-kHKeXE8OfnEW3rs8NWYqLizRYA6M5J_7Geq19TwEDWOCatin5ots6heTLmS9CANYKc9VCcw7cBniKoUcDYxqUn7GO3H4GTcNKQxWN3aSBDjjSsPQQBDIrnZCKdkuJi2rAfF44e6QXzufAnd08amUg1xBl9AmiZfHHtbJSH9yoMVXp2uwcpH8-8PR4Fu9hTTL1Xd-pw26HB0Xe6X_rePr7A"
-}
+class Metadata2:
+    @staticmethod
+    def _ms_to_lrc_timestamp(ms: int):
+        total_seconds = ms // 1000;
+        minutes = total_seconds // 60;
+        seconds = total_seconds % 60;
+        hundredths = (ms % 1000) // 10;
 
-# 2️⃣ CSRF JSON (must be stringified later)
-csrf_obj = {
-    "interface": "CSRFInterface.v1_0.CSRFHeaderElement",
-    "token": "3hSCW/VS7AX69orkvVUHwuqZyYN4B54qusiqBzrL6ns=",
-    "timestamp": "1772434070",
-    "rndNonce": "351867354"
-}
+        return f"{minutes:02}:{seconds:02}.{hundredths:02}";
 
-# 3️⃣ Build headers object (values that are JSON must be dumped)
-headers_obj = {
-    "x-amzn-authentication": json.dumps(auth_obj),
-    "x-amzn-device-model": "WEBPLAYER",
-    "x-amzn-device-width": "1920",
-    "x-amzn-device-family": "WebPlayer",
-    "x-amzn-device-id": "35793345365583055",
-    "x-amzn-user-agent": "Mozilla/5.0",
-    "x-amzn-session-id": "357-9334536-5583055",
-    "x-amzn-device-height": "1080",
-    "x-amzn-request-id": "3653260f-89d6-4310-a62e-f3041da1028f",
-    "x-amzn-device-language": "en_US",
-    "x-amzn-currency-of-preference": "JPY",
-    "x-amzn-os-version": "1.0",
-    "x-amzn-application-version": "1.0.9527.0",
-    "x-amzn-device-time-zone": "America/New_York",
-    "x-amzn-timestamp": "1772431224801",
-    "x-amzn-csrf": json.dumps(csrf_obj),
-    "x-amzn-music-domain": "music.amazon.co.jp",
-    "x-amzn-feature-flags": "hd-supported,uhd-supported",
-    "x-amzn-has-profile-id": "true",
-    "x-amzn-age-band": ""
-}
+    @staticmethod
+    def convert_lyrics_to_lrc(lyrics_json: dict):
+        methods = lyrics_json.get("methods", []);
+        lyrics_block = None;
 
-# 4️⃣ Final payload
-payload = {
-    "durationSeconds": "265",
-    "id": "B07JZ7PW6F",
-    "isLibrary": "false",
-    "userHash": json.dumps({"level": "HD_MEMBER"}),  # must be string
-    "headers": json.dumps(headers_obj)  # entire headers object must be string
-}
+        for method in methods:
+            if method.get("interface", "").endswith("SetLyricsMethod"):
+                lyrics_block = method.get("lyrics");
+                break;
 
-# 5️⃣ Send request properly
-response = requests.post(
-    url,
-    headers=headers,
-    json=payload   # use json= not data=
-)
+        if not lyrics_block:
+            raise ValueError("No lyrics found.");
 
-print(response.status_code)
-print(response.text)
+        lines = lyrics_block["lines"];
+        timing = lyrics_block["timing"];
 
+        lrc_lines = [];
+        last_index = None;
+
+        for ms_str in sorted(timing.keys(), key=lambda x: int(x)):
+            index = timing[ms_str];
+
+            if index != last_index:
+                text = lines.get(index, "").strip();
+
+                if text:
+                    timestamp = Metadata2._ms_to_lrc_timestamp(int(ms_str));
+                    lrc_lines.append(f"[{timestamp}]{text}");
+
+                last_index = index;
+
+        return "\n".join(lrc_lines);
+
+    @staticmethod
+    def save_lrc(lyrics_json: dict, output_path="output.lrc"):
+        content = Metadata2.convert_lyrics_to_lrc(lyrics_json)
+
+        if not content:
+            return
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        return output_path;
+
+    @staticmethod
+    def fetch_artwork_v2(track_asin: str, config: dict):
+        url = "https://fe.web.skill.music.a2z.com/api/playCatalogAlbum";
+
+        headers = {
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Origin": "https://music.amazon.co.jp",
+            "Referer": "https://music.amazon.co.jp/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+        }
+
+        auth_obj = {
+            "interface": "ClientAuthenticationInterface.v1_0.ClientTokenElement",
+            "accessToken": config["accessToken"]
+        }
+
+        csrf_obj = {
+            "interface": "CSRFInterface.v1_0.CSRFHeaderElement",
+            "token": config["csrf"]["token"],
+            "timestamp": config["csrf"]["ts"],
+            "rndNonce": config["csrf"]["rnd"]
+        }
+
+        headers_obj = {
+            "x-amzn-authentication": json.dumps(auth_obj),
+            "x-amzn-device-model": "WEBPLAYER",
+            "x-amzn-device-width": "1920",
+            "x-amzn-device-family": "WebPlayer",
+            "x-amzn-device-id": config["deviceId"],
+            "x-amzn-user-agent": "Mozilla/5.0",
+            "x-amzn-session-id": config.get("sessionId", ""),
+            "x-amzn-device-height": "1080",
+            "x-amzn-request-id": str(uuid.uuid4()),
+            "x-amzn-device-language": "en_US",
+            "x-amzn-currency-of-preference": config.get("currency", "JPY"),
+            "x-amzn-os-version": "1.0",
+            "x-amzn-application-version": "1.0.9527.0",
+            "x-amzn-device-time-zone": config.get("timezone", "America/New_York"),
+            "x-amzn-timestamp": str(int(time.time() * 1000)),
+            "x-amzn-csrf": json.dumps(csrf_obj),
+            "x-amzn-music-domain": config.get("musicDomain", "music.amazon.co.jp"),
+            "x-amzn-feature-flags": "hd-supported,uhd-supported",
+            "x-amzn-has-profile-id": "true",
+            "x-amzn-age-band": "",
+            "x-amzn-referer": "music.amazon.co.jp",
+            "x-amzn-affiliate-tags": "",
+            "x-amzn-ref-marker": "",
+            "x-amzn-page-url": f"https://music.amazon.co.jp/albums/{track_asin}",
+            "x-amzn-weblab-id-overrides": "",
+        }
+
+        payload = {
+            "id": track_asin,
+            "userHash": json.dumps({"level": "HD_MEMBER"}),
+            "headers": json.dumps(headers_obj)
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        data = response.json()
+
+        artwork_url = None
+
+        for method in data.get("methods", []):
+            if method.get("interface") == "PlaybackInterface.v1_0.SetMediaMethod":
+                metadata = method.get("metadata", {})
+                artwork_url = metadata.get("artwork")
+                break
+
+        print("artwork_url from 2:", artwork_url)
+
+        return artwork_url
+
+    @staticmethod
+    def fetch_lyrics(track_asin: str, duration: int, config: dict):
+        url = "https://fe.web.skill.music.a2z.com/api/showLyrics";
+
+        headers = {
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Origin": "https://music.amazon.co.jp",
+            "Referer": "https://music.amazon.co.jp/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+        }
+
+        auth_obj = {
+            "interface": "ClientAuthenticationInterface.v1_0.ClientTokenElement",
+            "accessToken": config["accessToken"]
+        }
+
+        csrf_obj = {
+            "interface": "CSRFInterface.v1_0.CSRFHeaderElement",
+            "token": config["csrf"]["token"],
+            "timestamp": config["csrf"]["ts"],
+            "rndNonce": config["csrf"]["rnd"]
+        }
+
+        headers_obj = {
+            "x-amzn-authentication": json.dumps(auth_obj),
+            "x-amzn-device-model": "WEBPLAYER",
+            "x-amzn-device-width": "1920",
+            "x-amzn-device-family": "WebPlayer",
+            "x-amzn-device-id": config["deviceId"],
+            "x-amzn-user-agent": "Mozilla/5.0",
+            "x-amzn-session-id": config.get("sessionId", ""),
+            "x-amzn-device-height": "1080",
+            "x-amzn-request-id": str(uuid.uuid4()),
+            "x-amzn-device-language": "en_US",
+            "x-amzn-currency-of-preference": config.get("currency", "JPY"),
+            "x-amzn-os-version": "1.0",
+            "x-amzn-application-version": "1.0.9527.0",
+            "x-amzn-device-time-zone": config.get("timezone", "America/New_York"),
+            "x-amzn-timestamp": str(int(time.time() * 1000)),
+            "x-amzn-csrf": json.dumps(csrf_obj),
+            "x-amzn-music-domain": config.get("musicDomain", "music.amazon.co.jp"),
+            "x-amzn-feature-flags": "hd-supported,uhd-supported",
+            "x-amzn-has-profile-id": "true",
+            "x-amzn-age-band": "",
+            "x-amzn-referer": "music.amazon.co.jp",
+            "x-amzn-affiliate-tags": "",
+            "x-amzn-ref-marker": "",
+            "x-amzn-page-url": f"https://music.amazon.co.jp/albums/{track_asin}",
+            "x-amzn-weblab-id-overrides": "",
+        }
+
+        payload = {
+            "durationSeconds": str(duration),
+            "id": track_asin,
+            "isLibrary": "false",
+            "userHash": json.dumps({"level": "HD_MEMBER"}),
+            "headers": json.dumps(headers_obj)
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        response.raise_for_status()
+        return response.json()
