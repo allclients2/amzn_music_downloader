@@ -65,6 +65,10 @@ class MpdInfo:
             json=payload
         )
 
+        if response.status_code != 200:
+            print("status code:", response.status_code)
+            print("response text:", response.text)
+
         return response.json()["contentResponseList"][0]["manifest"]
 
 

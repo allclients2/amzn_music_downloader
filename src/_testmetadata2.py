@@ -8,14 +8,14 @@ from media_utils import MediaUtils;  # if you placed ffprobe helper there
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python test_lyrics.py <track_asin> <config.json>");
+        print("usage: python test_lyrics.py <track_asin> <config.json>");
         sys.exit(1);
 
     track_asin = sys.argv[1]
     config_path = Path(sys.argv[2])
 
     if not config_path.exists():
-        print("Config file not found.");
+        print("config file not found.");
         sys.exit(1);
 
     # Load config
@@ -23,7 +23,7 @@ def main():
         config = json.load(f);
 
 
-    print("Fetching lyrics...");
+    print("fetching lyrics...");
     response = Metadata2.fetch_idk(
         track_asin=track_asin,
         config=config

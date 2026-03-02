@@ -74,7 +74,7 @@ class MPDStreamSelector:
         r = requests.get(rep["base_url"], stream=True);
 
         if r.status_code != 200:
-            print(f"Download failed. Status code: {r.status_code}");
+            print(f"download failed. Status code: {r.status_code}");
             return None;
 
         with open(output_path, "wb") as f:
@@ -82,7 +82,7 @@ class MPDStreamSelector:
                 if chunk:
                     f.write(chunk);
 
-        print(f"Full file saved to: {output_path}");
+        print(f"file saved to: {output_path}");
         return output_path;
 
     def _menu(self, stdscr):
@@ -92,7 +92,7 @@ class MPDStreamSelector:
         while True:
             stdscr.clear();
 
-            stdscr.addstr(0, 0, "Select a stream (↑/↓, Enter to select, p to pick, q to quit)");
+            stdscr.addstr(0, 0, "select a stream (↑/↓, enter to select, p to pick, q to quit)");
             stdscr.addstr(1, 0, "-" * 80);
 
             for idx, rep in enumerate(self.representations):
