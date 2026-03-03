@@ -3,8 +3,10 @@ import requests
 import os
 import re
 import subprocess
-from pathlib import Path
+import tempfile
 
+from pathlib import Path
+from contextlib import contextmanager
 from configs import Configs
 from cookies import Cookies
 from media_utils import MediaUtils
@@ -15,6 +17,9 @@ from mpd_selector import MPDStreamSelector
 from cookies import Cookies, CookieError
 from mutagen.mp4 import MP4, MP4Cover
 from metadata2 import Metadata2
+from metadata_objects import AlbumMetadata, TrackMetadata
+from lyrics import Lyrics
+from concurrent.futures import ThreadPoolExecutor
 
 def sanitize_filename(name: str) -> str:
     """Make filename OS safe."""
@@ -86,19 +91,64 @@ def download_artwork(url: str, path: str):
     with open(path, "wb") as f:
         f.write(response.content)
 
-def embed_metadata_and_cover(mp4_path: str, image_path: str, metadata: dict):
+def embed_metadata_and_cover(
+    mp4_path: str,
+    album: AlbumMetadata,
+    track: TrackMetadata,
+    artwork_path: str | None
+):
     audio = MP4(mp4_path)
 
-    with open(image_path, "rb") as img:
-        cover = img.read()
+    # track metadata
+    audio["\xa9nam"] = track.title
+    audio["\xa9ART"] = track.artist
+    audio["trkn"] = [(album.tracks.index(track) + 1, album.track_count)]
+    audio["\xa9day"] = album.release_date_iso or ""
+    audio["\xa9cmt"] = "explicit" if track.is_explicit else ""
 
-    audio["\xa9nam"] = metadata["track_name"]
-    audio["\xa9ART"] = metadata["artist_name"]
-    audio["\xa9alb"] = metadata["album_title"]
-    audio["covr"] = [
-        MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)
-    ]
+    # album metadata
+    audio["\xa9alb"] = album.name
+    audio["aART"] = album.artist
+    audio["\xa9cpy"] = album.copyright or ""
+
+    # lyrics
+    if track.lyrics and track.lyrics.has_content():
+        audio["\xa9lyr"] = track.lyrics.to_mp4_lyrics()
+
+    # popularity via freeform atom
+    if track.popularity is not None:
+        audio["----:com.apple.iTunes:POPULARITY"] = [
+            str(track.popularity).encode("utf-8")
+        ]
+
+    # artwork / coverart
+    if artwork_path:
+        with open(artwork_path, "rb") as img:
+            cover = img.read()
+
+        audio["covr"] = [
+            MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)
+        ]
+
     audio.save()
+
+@contextmanager
+def download_temp_artwork(url: str):
+    if not url:
+        yield None
+        return
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        tmp.write(response.content)
+        tmp_path = tmp.name
+
+    try:
+        yield tmp_path
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 def main():
     args = parse_args()
@@ -137,28 +187,25 @@ def main():
         if r["base_url"] == result["base_url"]
     )
 
-    print("fetching metadata...")
-    metadata = Metadata.getTrackMetadataFromEmbedLink(content_asin)
+    print("fetching base metadata...")
+    metadatav1 = Metadata.getTrackMetadataFromEmbedLink(content_asin)
 
-    track_name = metadata["track_name"]
-    artist_name = metadata["artist_name"]
-    artwork_url = Metadata2.fetch_artwork_v2(content_asin, config) or metadata["artwork_url"]
+    track_name = metadatav1["track_name"]
+    artist_name = metadatav1["artist_name"]
 
     output_filename = build_output_filename(track_name, artist_name)
 
-    # Determine output file
     if args.output:
         output_file = Path(args.output)
     else:
         output_file = Path(args.output_dir) / (output_filename + ".mp4")
 
+    print("downloading encrypted file...")
+    encrypted_file = Path("encrypted.mp4")
+    selector.download_full_file(rep, encrypted_file)
+
     print("fetching content keys...")
     content_key = Keys.getContentKeys(result["pssh"], config, cookie_header)
-
-    encrypted_file = Path("encrypted.mp4")
-
-    print("downloading encrypted file...")
-    selector.download_full_file(rep, encrypted_file)
 
     print("decrypting...")
     unicode_output = output_file
@@ -176,33 +223,61 @@ def main():
     except subprocess.CalledProcessError:
         print("decryption failed?")
         return
-    
 
-    print("applying metadata...")
-    
-    # Download artwork then embed it along with metadata
-    artwork_path = "cover.jpg"
-    download_artwork(artwork_url, artwork_path)
-    embed_metadata_and_cover(temp_output, artwork_path, metadata)
-    os.remove(artwork_path)
+    print("fetching extra metadata...")
 
-    duration = MediaUtils.get_duration_seconds(temp_output)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        album_future = executor.submit(
+            Metadata2.get_album_metadata,
+            metadatav1["album_asin"],
+            config
+        )
+        artwork_future = executor.submit(
+            Metadata2.fetch_artwork_v2,
+            content_asin,
+            config
+        )
+
+        album = album_future.result()
+        artwork_url = artwork_future.result()
+
+    track = next((t for t in album.tracks if t.asin == content_asin), None)
+
+    if not track:
+        raise ValueError(f"track {content_asin} not found in corresponding album {album.asin}")
+
+    if track.lyrics_available:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            lyrics_future = executor.submit(
+                Metadata2.fetch_lyrics,
+                track.asin,
+                track.duration_seconds,
+                config
+            )
+            json_lyrics = lyrics_future.result()
+
+        lyrics_obj = Lyrics.from_json(json_lyrics)
+        track.attach_lyrics(lyrics_obj)
+
+    artwork_url = artwork_url or album.cover_art_url
+
+    with download_temp_artwork(artwork_url) as artwork_path:
+        embed_metadata_and_cover(
+            mp4_path=temp_output,
+            album=album,
+            track=track,
+            artwork_path=artwork_path
+        )
 
     temp_output.rename(unicode_output)
 
     if not args.keep_encrypted:
         encrypted_file.unlink(missing_ok=True)
 
-    jsonLyrics = Metadata2.fetch_lyrics(
-        track_asin=content_asin,
-        duration=duration,
-        config=config
-    )
-
-    Metadata2.save_lrc(jsonLyrics, output_filename + ".lrc");
+    if track.lyrics and track.lyrics.has_content():
+        track.lyrics.save_lrc(output_filename + ".lrc")
 
     print(f"finished, saved to: {output_file}")
-
 
 if __name__ == "__main__":
     main()

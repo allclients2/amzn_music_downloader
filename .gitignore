@@ -2,3 +2,5 @@ device.wvd
 *.mp4
 *.txt
 *.lrc
+config.json
+response*.json

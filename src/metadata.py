@@ -14,11 +14,12 @@ class Metadata:
         artist_name = soup.select_one(".trackArtist a").get_text(strip=True)
         album_title = soup.select_one("#ALBUM_TITLE")["value"]
 
-        # Get artwork URL
+        album_asin_input = soup.select_one("#ALBUM_ASIN")
+        album_asin = album_asin_input["value"] if album_asin_input else None
+
         img_tag = soup.select_one(".headerImg img")
         artwork_url = img_tag["src"] if img_tag else None
 
-        # Upgrade resolution if possible
         if artwork_url:
             artwork_url = Metadata.upgrade_amazon_image(artwork_url)
 
@@ -26,13 +27,10 @@ class Metadata:
             "track_name": track_name,
             "artist_name": artist_name,
             "album_title": album_title,
+            "album_asin": album_asin,
             "artwork_url": artwork_url
         }
 
     @staticmethod
     def upgrade_amazon_image(url: str) -> str:
-        """
-        Replace _SY240_ or similar with higher resolution.
-        """
-        # Replace size block like _SY240_ or _SX240_ etc.
         return re.sub(r"\._S[XY]\d+_", "._SL1200_", url)
