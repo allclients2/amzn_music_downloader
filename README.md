@@ -7,7 +7,7 @@ Probably because they all got DMCA'd or something and this will too. Oh well.
 
 Usage:
 Make sure `mp4decrypt` is in the system path
-Get a device widevine file and name it as `device.wvd`. Place it into the directory of the repo (not src), then use as follows:
+Get a device widevine file and name it as `device.wvd`. Place it into the directory you are using the program from.
 
 usage: main.py [-h] [--output-dir OUTPUT_DIR] [--cookies-file COOKIES_FILE] [-v] [--from-browser]
                [--browser {chrome,edge,firefox}] [--min-bitrate MIN_BITRATE]
