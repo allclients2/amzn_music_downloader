@@ -26,7 +26,7 @@ def main():
         config = json.load(f)
 
     print("fetching album metadata...")
-    album = Metadata2.get_album_metadata(
+    album = Metadata2.get_album_metadatav2(
         album_asin=album_asin,
         config=config
     )
