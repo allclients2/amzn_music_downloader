@@ -26,7 +26,7 @@ class AlbumMetadata:
 class Metadata:
 
     @staticmethod
-    def getMetadataFromEmbedLink(contentAsin: str) -> Union[TrackMetadata, AlbumMetadata]:
+    def getMetadataFromEmbedLink(contentAsin: str) -> Union[tuple[TrackMetadata, AlbumMetadata], AlbumMetadata]:
         url = f"https://music.amazon.co.jp/embed/{contentAsin}"
         response = requests.get(url)
         soup = BeautifulSoup(response.text, "html.parser")
@@ -42,7 +42,7 @@ class Metadata:
         raise ValueError("Unsupported content type")
 
     @staticmethod
-    def _parse_track(soup: BeautifulSoup) -> TrackMetadata:
+    def _parse_track(soup: BeautifulSoup) -> tuple[TrackMetadata, AlbumMetadata]:
         track_name = soup.select_one(".trackTitle a").get_text(strip=True)
         artist_name = soup.select_one(".trackArtist a").get_text(strip=True)
         album_name = soup.select_one("#ALBUM_TITLE")["value"]
@@ -76,7 +76,7 @@ class Metadata:
             track_asin=track_asin,
             disc=disc,
             track_number=track_number
-        )
+        ), album_metadata
 
     @staticmethod
     def _parse_album(soup: BeautifulSoup) -> AlbumMetadata:

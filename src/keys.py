@@ -61,7 +61,7 @@ class Keys:
         pssh = PSSH(psshStr)
 
         # load device from a WVD file (your provision)
-        device = Device.load("C:\\Users\\brend\\Downloads\\decryptstuff\\device.wvd")
+        device = Device.load("device.wvd")
         
         # load cdm (creating a CDM instance using that device)
         cdm = Cdm.from_device(device)
