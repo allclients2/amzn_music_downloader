@@ -4,3 +4,4 @@ device.wvd
 *.lrc
 config.json
 response*.json
+downloads
