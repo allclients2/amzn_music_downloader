@@ -13,6 +13,6 @@ usage: main.py [-h] [--output-dir OUTPUT_DIR] [--cookies-file COOKIES_FILE] [-v]
                [--browser {chrome,edge,firefox}] [--min-bitrate MIN_BITRATE]
                content_asin
 
-Example:  `python src/main.py B07JZ7PW6F --from-browser --browser firefox`
+Example:  `python src/main.py B07JZ7PW6F --from-browser --browser firefox --output-dir downloads`
 
 Created/Tested on Windows 11 25H2 with Python 3.13.12. Not yet tested for other platforms.

@@ -30,8 +30,8 @@ def safe_filename(name, has_file_ext=False):
             sanitized = sanitized[:-1]
     return sanitized.strip()
 
-def build_output_filename(track_name: str, artist_name: str, track_num: int) -> str:
-    filename = f"{track_num} {track_name} - {artist_name}"
+def build_output_filename(disc_number: str, track_num: int, track_name: str) -> str:
+    filename = f"{disc_number} - {track_num} {track_name}"
     return safe_filename(filename, True)
 
 def download_artwork(url: str, path: str):
@@ -221,14 +221,14 @@ def fetch_track(
 
     track_number = track_metadatav1.track_number
     track_name = track_metadatav1.track_name
-    artist_name = track_metadatav1.artist_name
+    disc_number = track_metadatav1.disc
 
     safe_artist_name = safe_filename(track_metadatav1.artist_name, False)
     safe_album_name = safe_filename(track_metadatav1.album_name, False)
 
     track_output_dir = output_dir / safe_artist_name / safe_album_name
 
-    output_filename = build_output_filename(track_name, artist_name, track_number)
+    output_filename = build_output_filename(disc_number, track_number, track_name)
     track_output_dir.mkdir(parents=True, exist_ok=True)
     output_file = track_output_dir / (output_filename + ".mp4")
     
