@@ -4,86 +4,35 @@ import os
 import re
 import subprocess
 import tempfile
+import shutil
 
 from pathlib import Path
 from contextlib import contextmanager
 from configs import Configs
 from cookies import Cookies
-from media_utils import MediaUtils
 from keys import Keys
-from metadata import Metadata
+from metadata import Metadata, TrackMetadata, AlbumMetadata
 from mpd_info import MpdInfo
 from mpd_selector import MPDStreamSelector
 from cookies import Cookies, CookieError
 from mutagen.mp4 import MP4, MP4Cover
-from metadata2 import Metadata2
-from metadata_objects import AlbumMetadata, TrackMetadata
+from metadata2 import Metadata2, AlbumMetadataV2, TrackMetadataV2
 from lyrics import Lyrics
-from concurrent.futures import ThreadPoolExecutor
 
-def sanitize_filename(name: str) -> str:
-    """Make filename OS safe."""
-    return re.sub(r'[<>:"/\\|?*]', "", name)
+ILLEGAL_CHARS_RE = r'[\\/:*?"<>|;]'
 
+def safe_filename(name, has_file_ext=False):
+    sanitized = re.sub(ILLEGAL_CHARS_RE, "_", name)
+    if not has_file_ext:
+        if sanitized.endswith(".."):
+            sanitized = sanitized[:-1] + "_"
+        elif sanitized.endswith("."):
+            sanitized = sanitized[:-1]
+    return sanitized.strip()
 
-def build_output_filename(track_name: str, artist_name: str) -> str:
-    filename = f"{track_name} - {artist_name}"
-    return sanitize_filename(filename)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Download and decrypt a DRM protected track"
-    )
-
-    parser.add_argument(
-        "content_asin",
-        help="ASIN of the track (primary identifier)"
-    )
-
-    parser.add_argument(
-        "-o", "--output",
-        help="Output filename (default: auto-generated)"
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        default=".",
-        help="Directory to save the file (default: current directory)"
-    )
-
-    parser.add_argument(
-        "--cookies-file",
-        default="cookies.txt",
-        help="Path to Netscape cookies file"
-    )
-
-    parser.add_argument(
-        "--keep-encrypted",
-        action="store_true",
-        help="Keep encrypted temporary file"
-    )
-
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose logging"
-    )
-
-    parser.add_argument(
-        "--from-browser",
-        action="store_true",
-        help="Load cookies directly from browser"
-    )
-
-    parser.add_argument(
-        "--browser",
-        default="chrome",
-        choices=["chrome", "edge", "firefox"],
-        help="Browser to extract cookies from (default: chrome)"
-    )
-
-    return parser.parse_args()
+def build_output_filename(track_name: str, artist_name: str, track_num: int) -> str:
+    filename = f"{track_num} {track_name} - {artist_name}"
+    return safe_filename(filename, True)
 
 def download_artwork(url: str, path: str):
     response = requests.get(url)
@@ -93,35 +42,52 @@ def download_artwork(url: str, path: str):
 
 def embed_metadata_and_cover(
     mp4_path: str,
-    album: AlbumMetadata,
-    track: TrackMetadata,
+    track_metadatav1: TrackMetadata,
+    track_metadatav2: TrackMetadataV2,
+    album_metadatav2: AlbumMetadataV2,
     artwork_path: str | None
 ):
     audio = MP4(mp4_path)
+    
+    # disc info
+    disc_number = track_metadatav1.disc if hasattr(track_metadatav1, "disc") else 1
+
+    # tracks on this disc only
+    tracks_on_disc = [
+        t for t in album_metadatav2.tracks
+        if getattr(t, "disc", 1) == disc_number
+    ]
+
+    total_tracks_on_disc = len(tracks_on_disc)
+    total_discs = max(
+        (getattr(t, "disc", 1) for t in album_metadatav2.tracks),
+        default=1
+    )
 
     # track metadata
-    audio["\xa9nam"] = track.title
-    audio["\xa9ART"] = track.artist
-    audio["trkn"] = [(album.tracks.index(track) + 1, album.track_count)]
-    audio["\xa9day"] = album.release_date_iso or ""
-    audio["\xa9cmt"] = "explicit" if track.is_explicit else ""
+    audio["\xa9nam"] = track_metadatav2.title
+    audio["\xa9ART"] = track_metadatav2.artist
+    audio["trkn"] = [(track_metadatav1.track_number, total_tracks_on_disc)]
+    audio["disk"] = [(track_metadatav1.disc, total_discs)]
+    audio["\xa9day"] = album_metadatav2.release_date_iso or ""
+    audio["\xa9cmt"] = "explicit" if track_metadatav2.is_explicit else ""
 
     # album metadata
-    audio["\xa9alb"] = album.name
-    audio["aART"] = album.artist
-    audio["\xa9cpy"] = album.copyright or ""
+    audio["\xa9alb"] = album_metadatav2.name
+    audio["aART"] = album_metadatav2.artist
+    audio["\xa9cpy"] = album_metadatav2.copyright or ""
 
     # lyrics
-    if track.lyrics and track.lyrics.has_content():
-        audio["\xa9lyr"] = track.lyrics.to_mp4_lyrics()
+    if track_metadatav2.lyrics and track_metadatav2.lyrics.has_content():
+        audio["\xa9lyr"] = track_metadatav2.lyrics.to_mp4_lyrics()
 
-    # popularity via freeform atom
-    if track.popularity is not None:
+    # popularity
+    if track_metadatav2.popularity is not None:
         audio["----:com.apple.iTunes:POPULARITY"] = [
-            str(track.popularity).encode("utf-8")
+            str(track_metadatav2.popularity).encode("utf-8")
         ]
 
-    # artwork / coverart
+    # artwork
     if artwork_path:
         with open(artwork_path, "rb") as img:
             cover = img.read()
@@ -150,66 +116,135 @@ def download_temp_artwork(url: str):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-def main():
-    args = parse_args()
-    
-    try:
-        if args.from_browser:
-            print("loading cookies from browser...")
-            cookie_header = Cookies.from_browser(
-                domain="amazon.co.jp",
-                browser=args.browser
-            )
-        else:
-            cookie_header = Cookies.netscape_to_cookie_header(args.cookies_file)
-    except CookieError as e:
-        print(str(e))
-        return
-    
-    content_asin = args.content_asin
-    config = Configs.fetch_configs(cookie_header)
-
-    print("fetching track MPD streams...")
-    manifest_xml = MpdInfo.getTrackInfo(content_asin, config, cookie_header)
-    selector = MPDStreamSelector(manifest_xml)
-
-    result = selector.select()
-
-    if not result:
-        print("no track selection made.")
-        return
-
-    if args.verbose:
-        print(f"selected stream: {result}")
-
-    rep = next(
-        r for r in selector.representations
-        if r["base_url"] == result["base_url"]
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Download and decrypt a DRM protected track"
     )
 
-    print("fetching base metadata...")
-    metadatav1 = Metadata.getTrackMetadataFromEmbedLink(content_asin)
+    parser.add_argument(
+        "content_asin",
+        help="ASIN of the track (primary identifier)"
+    )
 
-    track_name = metadatav1["track_name"]
-    artist_name = metadatav1["artist_name"]
+    parser.add_argument(
+        "--output-dir",
+        default=".",
+        help="Directory to save the file (default: current directory)"
+    )
 
-    output_filename = build_output_filename(track_name, artist_name)
+    parser.add_argument(
+        "--cookies-file",
+        default="cookies.txt",
+        help="Path to Netscape cookies file"
+    )
 
-    if args.output:
-        output_file = Path(args.output)
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose logging"
+    )
+
+    parser.add_argument(
+        "--from-browser",
+        action="store_true",
+        help="Load cookies directly from browser"
+    )
+
+    parser.add_argument(
+        "--browser",
+        default="chrome",
+        choices=["chrome", "edge", "firefox"],
+        help="Browser to extract cookies from (default: chrome)"
+    )
+
+    parser.add_argument(
+        "--min-bitrate",
+        default=None,
+        help="Minimum bitrate in kbps, or 'min' or 'max' (default: max)"
+    )
+
+    args = parser.parse_args()
+
+    if args.min_bitrate and args.min_bitrate.isdigit():
+        args.min_bitrate = int(args.min_bitrate)
+    elif args.min_bitrate not in ("min", "max"):
+        args.min_bitrate = None
+
+    return args
+
+def fetch_track(
+    track_asin: str,
+    track_metadatav1: TrackMetadata,
+    track_metadatav2: TrackMetadataV2,
+    album_metadatav2: AlbumMetadataV2,
+    output_dir: Path,
+    config,
+    cookie_header: str,
+    min_bitrate: str
+):
+    print("fetching track MPD streams...")
+    try:
+        manifest_xml = MpdInfo.getTrackInfo(track_asin, config, cookie_header)
+    except KeyError:
+        print("failed to fetch MPD streams. try reloading the website or refetching cookies.")
+    selector = MPDStreamSelector(manifest_xml)
+
+    representations = selector.representations
+    if not representations:
+        print("no available representations.")
+        return
+
+    if min_bitrate == "max":
+        rep = max(representations, key=lambda r: int(r["bandwidth"]))
+    elif min_bitrate == "min":
+        rep = min(representations, key=lambda r: int(r["bandwidth"]))
+    elif min_bitrate and min_bitrate.isdigit():
+        eligible = [
+            r for r in representations
+            if int(r["bandwidth"]) // 1000 >= min_bitrate
+        ]
+        if not eligible:
+            rep = max(representations, key=lambda r: int(r["bandwidth"]))
+        else:
+            rep = min(eligible, key=lambda r: int(r["bandwidth"]))
     else:
-        output_file = Path(args.output_dir) / (output_filename + ".mp4")
+        result = selector.select()
+
+        if not result:
+            print("no track selection made.")
+            return
+        
+        rep = next(
+            r for r in selector.representations
+            if r["base_url"] == result["base_url"]
+        )
+
+    track_number = track_metadatav1.track_number
+    track_name = track_metadatav1.track_name
+    artist_name = track_metadatav1.artist_name
+
+    safe_artist_name = safe_filename(track_metadatav1.artist_name, False)
+    safe_album_name = safe_filename(track_metadatav1.album_name, False)
+
+    track_output_dir = output_dir / safe_artist_name / safe_album_name
+
+    output_filename = build_output_filename(track_name, artist_name, track_number)
+    track_output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = track_output_dir / (output_filename + ".mp4")
+    
+    # create a temporary directory we can work with
+    temp_dir = (output_dir / ".downloader")
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     print("downloading encrypted file...")
-    encrypted_file = Path("encrypted.mp4")
+    encrypted_file = Path(temp_dir / "encrypted.mp4")
     selector.download_full_file(rep, encrypted_file)
 
     print("fetching content keys...")
-    content_key = Keys.getContentKeys(result["pssh"], config, cookie_header)
+    content_key = Keys.getContentKeys(rep["pssh"], config, cookie_header)
 
-    print("decrypting...")
-    unicode_output = output_file
-    temp_output = Path("decrypted_temp.mp4")
+    print("decrypting via mp4decrypt...")
+    temp_output = Path(temp_dir / "decrypted_temp.mp4")
 
     cmd = [
         "mp4decrypt",
@@ -224,60 +259,92 @@ def main():
         print("decryption failed?")
         return
 
-    print("fetching extra metadata...")
+    print("processing metadata...")
+    json_lyrics = Metadata2.fetch_lyrics(
+        track_asin=track_metadatav2.asin,
+        duration=track_metadatav2.duration_seconds,
+        config=config
+    )
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        album_future = executor.submit(
-            Metadata2.get_album_metadata,
-            metadatav1["album_asin"],
-            config
-        )
-        artwork_future = executor.submit(
-            Metadata2.fetch_artwork_v2,
-            content_asin,
-            config
-        )
+    lyrics_obj = Lyrics.from_json(json_lyrics)
+    track_metadatav2.attach_lyrics(lyrics_obj)
 
-        album = album_future.result()
-        artwork_url = artwork_future.result()
-
-    track = next((t for t in album.tracks if t.asin == content_asin), None)
-
-    if not track:
-        raise ValueError(f"track {content_asin} not found in corresponding album {album.asin}")
-
-    if track.lyrics_available:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            lyrics_future = executor.submit(
-                Metadata2.fetch_lyrics,
-                track.asin,
-                track.duration_seconds,
-                config
-            )
-            json_lyrics = lyrics_future.result()
-
-        lyrics_obj = Lyrics.from_json(json_lyrics)
-        track.attach_lyrics(lyrics_obj)
-
-    artwork_url = artwork_url or album.cover_art_url
+    artwork_url = Metadata2.fetch_artwork_v2(track_asin, config)
 
     with download_temp_artwork(artwork_url) as artwork_path:
         embed_metadata_and_cover(
             mp4_path=temp_output,
-            album=album,
-            track=track,
+            track_metadatav1=track_metadatav1,
+            track_metadatav2=track_metadatav2,
+            album_metadatav2=album_metadatav2,
             artwork_path=artwork_path
         )
 
-    temp_output.rename(unicode_output)
+    temp_output.rename(output_file)
+    shutil.rmtree(temp_dir)
 
-    if not args.keep_encrypted:
-        encrypted_file.unlink(missing_ok=True)
-
-    if track.lyrics and track.lyrics.has_content():
-        track.lyrics.save_lrc(output_filename + ".lrc")
+    if track_metadatav2.lyrics and track_metadatav2.lyrics.has_content():
+        track_metadatav2.lyrics.save_lrc(track_output_dir / (output_filename + ".lrc"))
 
     print(f"finished, saved to: {output_file}")
+
+def main():
+    args = parse_args()
+
+    try:
+        if args.from_browser:
+            print("loading cookies from browser...")
+            cookie_header = Cookies.from_browser(
+                domain="amazon.co.jp",
+                browser=args.browser
+            )
+        else:
+            cookie_header = Cookies.netscape_to_cookie_header(args.cookies_file)
+    except CookieError as e:
+        print(str(e))
+        return
+
+    print("fetching configs...")
+    config = Configs.fetch_configs(cookie_header)
+
+    print("fetching base metadata...")
+    metadatav1 = Metadata.getMetadataFromEmbedLink(args.content_asin)
+
+    output_dir = Path(args.output_dir) 
+
+    print("fetching album metadata...")
+    album_metadatav2 = Metadata2.get_album_metadatav2(
+        album_asin=metadatav1.album_asin,
+        config=config
+    )
+
+    if isinstance(metadatav1, AlbumMetadata):
+        for index, track_metadatav1 in enumerate(metadatav1.tracks):
+            fetch_track(
+                track_asin=track_metadatav1.track_asin,
+                track_metadatav1=track_metadatav1,
+                track_metadatav2=album_metadatav2.tracks[index],
+                album_metadatav2=album_metadatav2,
+                output_dir=output_dir,
+                config=config,
+                cookie_header=cookie_header,
+                min_bitrate=args.min_bitrate
+            )
+    elif isinstance(metadatav1, TrackMetadata):
+        track_metadatav2 = next((t for t in album_metadatav2.tracks if t.asin == metadatav1.track_asin), None)
+        if not track_metadatav2:
+            raise ValueError(f"track {metadatav1.track_asin} not found in album {album_metadatav2.asin}")
+
+        fetch_track(
+            track_asin=args.content_asin,
+            track_metadatav1=metadatav1,
+            track_metadatav2=track_metadatav2,
+            album_metadatav2=album_metadatav2,
+            output_dir=output_dir,
+            config=config,
+            cookie_header=cookie_header,
+            min_bitrate=args.min_bitrate
+        )
 
 if __name__ == "__main__":
     main()
