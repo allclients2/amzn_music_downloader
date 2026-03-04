@@ -44,6 +44,7 @@ def embed_metadata_and_cover(
     mp4_path: str,
     track_metadatav1: TrackMetadata,
     track_metadatav2: TrackMetadataV2,
+    album_metadatav1: AlbumMetadata,
     album_metadatav2: AlbumMetadataV2,
     artwork_path: str | None
 ):
@@ -54,13 +55,13 @@ def embed_metadata_and_cover(
 
     # tracks on this disc only
     tracks_on_disc = [
-        t for t in album_metadatav2.tracks
+        t for t in album_metadatav1.tracks
         if getattr(t, "disc", 1) == disc_number
     ]
 
     total_tracks_on_disc = len(tracks_on_disc)
     total_discs = max(
-        (getattr(t, "disc", 1) for t in album_metadatav2.tracks),
+        (getattr(t, "disc", 1) for t in album_metadatav1.tracks),
         default=1
     )
 
@@ -176,6 +177,7 @@ def fetch_track(
     track_asin: str,
     track_metadatav1: TrackMetadata,
     track_metadatav2: TrackMetadataV2,
+    album_metadatav1: AlbumMetadata,
     album_metadatav2: AlbumMetadataV2,
     output_dir: Path,
     config,
@@ -276,6 +278,7 @@ def fetch_track(
             mp4_path=temp_output,
             track_metadatav1=track_metadatav1,
             track_metadatav2=track_metadatav2,
+            album_metadatav1=album_metadatav1,
             album_metadatav2=album_metadatav2,
             artwork_path=artwork_path
         )
@@ -308,7 +311,7 @@ def main():
     config = Configs.fetch_configs(cookie_header)
 
     print("fetching base metadata...")
-    metadatav1 = Metadata.getMetadataFromEmbedLink(args.content_asin)
+    metadatav1, album_metadatav1 = Metadata.getMetadataFromEmbedLink(args.content_asin)
 
     output_dir = Path(args.output_dir) 
 
@@ -324,6 +327,7 @@ def main():
                 track_asin=track_metadatav1.track_asin,
                 track_metadatav1=track_metadatav1,
                 track_metadatav2=album_metadatav2.tracks[index],
+                album_metadatav1=album_metadatav1,
                 album_metadatav2=album_metadatav2,
                 output_dir=output_dir,
                 config=config,
@@ -339,6 +343,7 @@ def main():
             track_asin=args.content_asin,
             track_metadatav1=metadatav1,
             track_metadatav2=track_metadatav2,
+            album_metadatav1=album_metadatav1,
             album_metadatav2=album_metadatav2,
             output_dir=output_dir,
             config=config,
