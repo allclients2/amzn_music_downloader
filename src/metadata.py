@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import List, Union, Optional
 
-
 @dataclass
 class TrackMetadata:
     track_name: str
@@ -12,8 +11,27 @@ class TrackMetadata:
     album_name: str
     track_asin: str
     album_asin: str
-    disc: int
-    track_number: int
+    disc: int|None
+    track_number: int|None
+
+    def fetch_disc_info(self):
+        if (self.disc is not None) and (self.track_number is not None):
+            return
+
+        album_metadata = Metadata.getMetadataFromEmbedLink(self.album_asin)
+
+        disc_found = None
+        track_number_found = None
+        for track in album_metadata.tracks:
+            if track.track_asin == self.track_asin:
+                disc_found = track.disc
+                track_number_found = track.track_number
+                break
+
+        self.disc = disc_found 
+        self.track_number = track_number_found
+
+        return album_metadata
 
 @dataclass
 class AlbumMetadata:
@@ -23,10 +41,15 @@ class AlbumMetadata:
     artwork_url: Optional[str]
     tracks: List[TrackMetadata]
 
+@dataclass
+class MetadataResult:
+    album: AlbumMetadata
+    track: Optional[TrackMetadata] = None
+
 class Metadata:
 
     @staticmethod
-    def getMetadataFromEmbedLink(contentAsin: str) -> Union[tuple[TrackMetadata, AlbumMetadata], AlbumMetadata]:
+    def getMetadataFromEmbedLink(contentAsin: str) -> Union[TrackMetadata, AlbumMetadata]:
         url = f"https://music.amazon.co.jp/embed/{contentAsin}"
         response = requests.get(url)
         soup = BeautifulSoup(response.text, "html.parser")
@@ -55,28 +78,15 @@ class Metadata:
         track_asin_input = soup.select_one("#ASIN")
         track_asin = track_asin_input["value"] if track_asin_input else None
 
-        album_metadata = Metadata.getMetadataFromEmbedLink(album_asin)
-
-        disc = None
-        track_number = None
-
-        for track in album_metadata.tracks:
-            if track.track_asin == track_asin:
-                disc = track.disc
-                track_number = track.track_number
-                break
-
-        assert disc and track_number, "failed to find disc or track_number"
-
         return TrackMetadata(
             track_name=track_name,
             artist_name=artist_name,
             album_name=album_name,
             album_asin=album_asin,
             track_asin=track_asin,
-            disc=disc,
-            track_number=track_number
-        ), album_metadata
+            disc=None,
+            track_number=None
+        )
 
     @staticmethod
     def _parse_album(soup: BeautifulSoup) -> AlbumMetadata:
