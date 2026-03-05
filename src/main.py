@@ -5,6 +5,7 @@ import re
 import subprocess
 import tempfile
 import shutil
+import asyncio
 
 from pathlib import Path
 from contextlib import contextmanager
@@ -134,6 +135,12 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--worker-num",
+        default="3",
+        help="Number of workers to use when fetching tracks within an album"
+    )
+
+    parser.add_argument(
         "--cookies-file",
         default="cookies.txt",
         help="Path to Netscape cookies file"
@@ -173,7 +180,33 @@ def parse_args():
 
     return args
 
-def fetch_track(
+async def download_task(selector, rep, encrypted_file):
+    print("downloading encrypted file...")
+    return await asyncio.to_thread(
+        selector.download_full_file,
+        rep,
+        encrypted_file
+    )
+
+async def keys_task(rep, config, cookie_header):
+    print("fetching content keys...")
+    return await asyncio.to_thread(
+        Keys.getContentKeys,
+        rep["pssh"],
+        config,
+        cookie_header
+    )
+
+async def lyrics_task(track_metadatav2, config):
+    print("fetching lyrics (if present)...")
+    return await asyncio.to_thread(
+        Metadata2.fetch_lyrics,
+        track_metadatav2.asin,
+        track_metadatav2.duration_seconds,
+        config
+    )
+
+async def fetch_track(
     track_asin: str,
     track_metadatav1: TrackMetadata,
     track_metadatav2: TrackMetadataV2,
@@ -225,10 +258,10 @@ def fetch_track(
     track_name = track_metadatav1.track_name
     disc_number = track_metadatav1.disc
 
-    safe_artist_name = safe_filename(track_metadatav1.artist_name, False)
+    safe_album_artist_name = safe_filename(album_metadatav1.artist_name, False)
     safe_album_name = safe_filename(track_metadatav1.album_name, False)
 
-    track_output_dir = output_dir / safe_artist_name / safe_album_name
+    track_output_dir = output_dir / safe_album_artist_name / safe_album_name
 
     output_filename = build_output_filename(disc_number, track_number, track_name)
     track_output_dir.mkdir(parents=True, exist_ok=True)
@@ -240,10 +273,16 @@ def fetch_track(
 
     print("downloading encrypted file...")
     encrypted_file = Path(temp_dir / "encrypted.mp4")
-    selector.download_full_file(rep, encrypted_file)
 
-    print("fetching content keys...")
-    content_key = Keys.getContentKeys(rep["pssh"], config, cookie_header)
+    download_coro = download_task(selector, rep, encrypted_file)
+    keys_coro = keys_task(rep, config, cookie_header)
+    lyrics_coro = lyrics_task(track_metadatav2, config)
+
+    content_key, _, json_lyrics = await asyncio.gather(
+        keys_coro,
+        download_coro,
+        lyrics_coro
+    )
 
     print("decrypting via mp4decrypt...")
     temp_output = Path(temp_dir / "decrypted_temp.mp4")
@@ -262,12 +301,6 @@ def fetch_track(
         return
 
     print("processing metadata...")
-    json_lyrics = Metadata2.fetch_lyrics(
-        track_asin=track_metadatav2.asin,
-        duration=track_metadatav2.duration_seconds,
-        config=config
-    )
-
     lyrics_obj = Lyrics.from_json(json_lyrics)
     track_metadatav2.attach_lyrics(lyrics_obj)
 
@@ -291,7 +324,11 @@ def fetch_track(
 
     print(f"finished, saved to: {output_file}")
 
-def main():
+async def fetch_concurrent(semaphore, **kwargs):
+    async with semaphore:
+        return await fetch_track(**kwargs)
+
+async def main():
     args = parse_args()
 
     try:
@@ -311,7 +348,7 @@ def main():
     config = Configs.fetch_configs(cookie_header)
 
     print("fetching base metadata...")
-    metadatav1, album_metadatav1 = Metadata.getMetadataFromEmbedLink(args.content_asin)
+    metadatav1 = Metadata.getMetadataFromEmbedLink(args.content_asin)
 
     output_dir = Path(args.output_dir) 
 
@@ -323,11 +360,11 @@ def main():
 
     if isinstance(metadatav1, AlbumMetadata):
         for index, track_metadatav1 in enumerate(metadatav1.tracks):
-            fetch_track(
+            await fetch_track(
                 track_asin=track_metadatav1.track_asin,
                 track_metadatav1=track_metadatav1,
                 track_metadatav2=album_metadatav2.tracks[index],
-                album_metadatav1=album_metadatav1,
+                album_metadatav1=metadatav1,
                 album_metadatav2=album_metadatav2,
                 output_dir=output_dir,
                 config=config,
@@ -339,7 +376,9 @@ def main():
         if not track_metadatav2:
             raise ValueError(f"track {metadatav1.track_asin} not found in album {album_metadatav2.asin}")
 
-        fetch_track(
+        album_metadatav1 = metadatav1.fetch_disc_info()
+
+        await fetch_track(
             track_asin=args.content_asin,
             track_metadatav1=metadatav1,
             track_metadatav2=track_metadatav2,
@@ -352,4 +391,4 @@ def main():
         )
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
