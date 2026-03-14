@@ -92,10 +92,6 @@ class Cookies:
 
         return "; ".join(ordered_pairs)
 
-    # ---------------------------
-    # 🔥 Browser Auto Extraction
-    # ---------------------------
-
     @staticmethod
     def from_browser(domain: str, browser: str = "chrome") -> str:
         if browser_cookie3 is None:

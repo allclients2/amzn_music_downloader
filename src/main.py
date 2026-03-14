@@ -2,13 +2,16 @@ import argparse
 import asyncio
 
 from pathlib import Path
-from configs import Configs
+from configs import fetch_configs, build_browser_with_cookies
 from cookies import Cookies
 from metadata import Metadata, TrackMetadata, AlbumMetadata
 from cookies import Cookies, CookieError
 from metadata2 import Metadata2
 from fetch_track import fetch_track
 from mpd_info import find_representation
+from http.cookiejar import MozillaCookieJar
+import requests
+import os
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -66,6 +69,22 @@ def parse_args():
 
     return args
 
+def cookie_header_to_jar(session, cookie_header, domain=".amazon.co.jp"):
+    for pair in cookie_header.split(";"):
+        name, value = pair.strip().split("=", 1)
+        session.cookies.set(name, value, domain=domain, path="/")
+
+def load_cookie_session(cookie_file):
+    session = requests.Session()
+
+    jar = MozillaCookieJar(cookie_file)
+
+    if os.path.exists(cookie_file):
+        jar.load(ignore_discard=True, ignore_expires=True)
+
+    session.cookies = jar
+    return session, jar
+
 async def main():
     args = parse_args()
 
@@ -73,18 +92,29 @@ async def main():
         if args.from_browser:
             print("loading cookies from browser...")
             cookie_header = Cookies.from_browser(
-                domain="amazon.co.jp",
+                domain=".amazon.co.jp",
                 browser=args.browser
             )
+
+            session = requests.Session()
+            cookie_header_to_jar(session, cookie_header)
+            jar = None
         else:
-            cookie_header = Cookies.netscape_to_cookie_header(args.cookies_file)
+            session, jar = load_cookie_session(args.cookies_file)
+
     except CookieError as e:
         print(str(e))
         return
 
-    print("fetching configs...")
-    config = Configs.fetch_configs(cookie_header)
+    browser = build_browser_with_cookies(session)
 
+    print("fetching configs...")
+    config = fetch_configs(session)
+
+    if jar:
+       print("updated cookies")
+       jar.save(ignore_discard=False, ignore_expires=False)
+    
     print("fetching base metadata...")
     metadatav1 = Metadata.getMetadataFromEmbedLink(args.content_asin)
 

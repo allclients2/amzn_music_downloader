@@ -27,7 +27,14 @@ def download_temp_artwork(url: str, directory: str):
         suffix=".jpg",
         dir=directory
     ) as tmp:
-        response = requests.get(url, timeout=10)
+        response = requests.get(
+            url,
+            timeout = 10,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+            }
+        )
         response.raise_for_status()
         tmp.write(response.content)
         tmp_path = tmp.name
@@ -149,6 +156,7 @@ async def fetch_track(
     output_dir: Path,
     config,
     cookie_header: str,
+    build_folder_structure: bool = True
 ):
     mpd_rep = track_representation.mpd_representation
     track_asin = track_representation.track_asin
@@ -157,10 +165,13 @@ async def fetch_track(
     track_name = track_metadatav1.track_name
     disc_number = track_metadatav1.disc
 
-    safe_album_artist_name = safe_filename(album_metadatav1.artist_name, False)
-    safe_album_name = safe_filename(track_metadatav1.album_name, False)
+    if build_folder_structure:
+        safe_album_artist_name = safe_filename(album_metadatav1.artist_name, False)
+        safe_album_name = safe_filename(track_metadatav1.album_name, False)
 
-    track_output_dir = output_dir / safe_album_artist_name / safe_album_name
+        track_output_dir = output_dir / safe_album_artist_name / safe_album_name
+    else:
+        track_output_dir = output_dir
 
     output_filename = build_output_filename(disc_number, track_number, track_name)
     track_output_dir.mkdir(parents=True, exist_ok=True)
