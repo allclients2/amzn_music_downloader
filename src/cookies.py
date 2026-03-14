@@ -24,114 +24,89 @@ REQUIRED_ORDER = [
     "session-token",
 ]
 
-
 class CookieError(Exception):
     pass
 
+def _validate_required(
+    parsed: Dict[str, str],
+    expired: List[str]
+):
+    missing = [c for c in REQUIRED_ORDER if c not in parsed]
 
-class Cookies:
+    if expired:
+        raise CookieError(
+            f"❌ The following required cookies are EXPIRED:\n"
+            f"{expired}\n\n"
+            f"Please refresh your login session and export cookies again."
+        )
 
-    @staticmethod
-    def _validate_required(
-        parsed: Dict[str, str],
-        expired: List[str]
-    ):
-        missing = [c for c in REQUIRED_ORDER if c not in parsed]
+    if missing:
+        raise CookieError(
+            f"❌ Missing required cookies:\n"
+            f"{missing}\n\n"
+            f"Make sure you're logged in and exported the correct domain."
+        )
 
-        if expired:
-            raise CookieError(
-                f"❌ The following required cookies are EXPIRED:\n"
-                f"{expired}\n\n"
-                f"Please refresh your login session and export cookies again."
-            )
 
-        if missing:
-            raise CookieError(
-                f"❌ Missing required cookies:\n"
-                f"{missing}\n\n"
-                f"Make sure you're logged in and exported the correct domain."
-            )
+async def get_cookie_header(browser_session) -> str:
+    context = browser_session["context"]
+    cookies = await context.cookies("https://music.amazon.co.jp")
 
-    @staticmethod
-    def netscape_to_cookie_header(file_path: str) -> str:
-        parsed_cookies: Dict[str, str] = {}
-        expired_cookies: List[str] = []
+    filtered = {
+        c["name"]: c["value"]
+        for c in cookies
+        if c["name"] in REQUIRED_ORDER
+        and (c.get("expires", 0) == 0 or c.get("expires", 0) > time.time())
+    }
 
-        with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+    _validate_required(filtered, [
+        c["name"] for c in cookies
+        if c["name"] in REQUIRED_ORDER
+        and c.get("expires", 0) != 0
+        and c["expires"] < time.time()
+    ])
 
-                if not line or line.startswith("#"):
-                    continue
+    return "; ".join(f"{name}={filtered[name]}" for name in REQUIRED_ORDER if name in filtered)
 
-                parts = line.split("\t")
-                if len(parts) < 7:
-                    continue
+def cookies_from_browser(domain: str, browser: str = "chrome") -> str:
+    if browser_cookie3 is None:
+        raise CookieError(
+            "browser-cookie3 is not installed.\n"
+            "Install it with: pip install browser-cookie3"
+        )
 
-                domain, flag, path, secure, expires, name, value = parts[:7]
+    try:
+        if browser == "chrome":
+            jar = browser_cookie3.chrome(domain_name=domain)
+        elif browser == "edge":
+            jar = browser_cookie3.edge(domain_name=domain)
+        elif browser == "firefox":
+            jar = browser_cookie3.firefox(domain_name=domain)
+        else:
+            raise CookieError(f"Unsupported browser: {browser}")
+    except Exception as e:
+        raise CookieError(f"Failed to load cookies from browser: {e}")
 
-                if name not in REQUIRED_ORDER:
-                    continue
+    parsed = {}
+    expired = []
 
-                try:
-                    exp = float(expires)
-                    if exp != 0 and exp < time.time():
-                        expired_cookies.append(name)
-                        continue
-                except ValueError:
-                    pass
+    now = time.time()
 
-                parsed_cookies[name] = value
+    for cookie in jar:
+        if cookie.name not in REQUIRED_ORDER:
+            continue
 
-        Cookies._validate_required(parsed_cookies, expired_cookies)
+        if cookie.expires and cookie.expires < now:
+            expired.append(cookie.name)
+            continue
 
-        ordered_pairs = [
-            f"{name}={parsed_cookies[name]}"
-            for name in REQUIRED_ORDER
-        ]
+        parsed[cookie.name] = cookie.value
 
-        return "; ".join(ordered_pairs)
+    _validate_required(parsed, expired)
 
-    @staticmethod
-    def from_browser(domain: str, browser: str = "chrome") -> str:
-        if browser_cookie3 is None:
-            raise CookieError(
-                "browser-cookie3 is not installed.\n"
-                "Install it with: pip install browser-cookie3"
-            )
+    ordered_pairs = [
+        f"{name}={parsed[name]}"
+        for name in REQUIRED_ORDER
+    ]
 
-        try:
-            if browser == "chrome":
-                jar = browser_cookie3.chrome(domain_name=domain)
-            elif browser == "edge":
-                jar = browser_cookie3.edge(domain_name=domain)
-            elif browser == "firefox":
-                jar = browser_cookie3.firefox(domain_name=domain)
-            else:
-                raise CookieError(f"Unsupported browser: {browser}")
-        except Exception as e:
-            raise CookieError(f"Failed to load cookies from browser: {e}")
-
-        parsed = {}
-        expired = []
-
-        now = time.time()
-
-        for cookie in jar:
-            if cookie.name not in REQUIRED_ORDER:
-                continue
-
-            if cookie.expires and cookie.expires < now:
-                expired.append(cookie.name)
-                continue
-
-            parsed[cookie.name] = cookie.value
-
-        Cookies._validate_required(parsed, expired)
-
-        ordered_pairs = [
-            f"{name}={parsed[name]}"
-            for name in REQUIRED_ORDER
-        ]
-
-        return "; ".join(ordered_pairs)
+    return "; ".join(ordered_pairs)

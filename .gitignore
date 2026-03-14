@@ -6,3 +6,5 @@ config.json
 response*.json
 downloads
 _testcookie.py
+*.env
+*config_cache.json
