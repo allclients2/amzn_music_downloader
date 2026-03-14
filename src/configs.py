@@ -1,5 +1,5 @@
 import requests
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 
@@ -34,15 +34,15 @@ def _session_to_playwright_cookies(session: requests.Session):
     return cookies
 
 
-def build_browser_with_cookies(session: requests.Session):
+async def build_browser_with_cookies(session: requests.Session):
 
-    playwright = sync_playwright().start()
+    playwright = await async_playwright().start()
 
-    browser = playwright.chromium.launch(
-        headless=True
+    browser = await playwright.chromium.launch(
+        headless=False
     )
 
-    context = browser.new_context(
+    context = await browser.new_context(
         user_agent=UA
     )
 
@@ -50,9 +50,9 @@ def build_browser_with_cookies(session: requests.Session):
 
     if cookies:
         print("\nInjecting cookies into browser context...")
-        context.add_cookies(cookies)
+        await context.add_cookies(cookies)
 
-    page = context.new_page()
+    page = await context.new_page()
 
     return {
         "playwright": playwright,
@@ -62,27 +62,29 @@ def build_browser_with_cookies(session: requests.Session):
     }
 
 
-def fetch_configs(browser_session):
+async def fetch_configs(browser_session):
 
     page = browser_session["page"]
 
     print("\n=== Navigating to Amazon Music player ===")
 
-    with page.expect_response(
+    async with page.expect_response(
         lambda r: "/config.json" in r.url,
         timeout=15000
     ) as config_response:
 
-        page.goto(
+        await page.goto(
             "https://music.amazon.co.jp/home",
             wait_until="domcontentloaded"
         )
 
-    response = config_response.value
+    await page.wait_for_timeout(5000)
+
+    response = await config_response.value
 
     print("\n=== config.json captured ===")
 
-    config = response.json()
+    config = await response.json()
 
     print("\nconfig:", config)
 

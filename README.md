@@ -16,3 +16,5 @@ usage: main.py [-h] [--output-dir OUTPUT_DIR] [--cookies-file COOKIES_FILE] [-v]
 Example:  `python src/main.py B07JZ7PW6F --from-browser --browser firefox --output-dir downloads`
 
 Created/Tested on Windows 11 25H2 with Python 3.13.12. Not yet tested for other platforms.
+
+This can also be used as a bot. Simply add your bot token to `.env` then run `src/bot.py`. Early feature; may have bugs.

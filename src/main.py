@@ -3,9 +3,8 @@ import asyncio
 
 from pathlib import Path
 from configs import fetch_configs, build_browser_with_cookies
-from cookies import Cookies
 from metadata import Metadata, TrackMetadata, AlbumMetadata
-from cookies import Cookies, CookieError
+from cookies import CookieError, get_cookie_header, cookies_from_browser
 from metadata2 import Metadata2
 from fetch_track import fetch_track
 from mpd_info import find_representation
@@ -91,13 +90,12 @@ async def main():
     try:
         if args.from_browser:
             print("loading cookies from browser...")
-            cookie_header = Cookies.from_browser(
+            cookie_header = cookies_from_browser(
                 domain=".amazon.co.jp",
                 browser=args.browser
             )
 
             session = requests.Session()
-            cookie_header_to_jar(session, cookie_header)
             jar = None
         else:
             session, jar = load_cookie_session(args.cookies_file)
@@ -106,15 +104,21 @@ async def main():
         print(str(e))
         return
 
-    browser = build_browser_with_cookies(session)
+    browser = await build_browser_with_cookies(session)
 
     print("fetching configs...")
-    config = fetch_configs(session)
+    config = await fetch_configs(browser)
+
+    print("extracting cookie header from browser session...")
+    cookie_header = await get_cookie_header(browser)
+
+    await browser["browser"].close()
+    await browser["playwright"].stop()
 
     if jar:
-       print("updated cookies")
-       jar.save(ignore_discard=False, ignore_expires=False)
-    
+        print("saved cookies")
+        jar.save(ignore_discard=True, ignore_expires=True)
+
     print("fetching base metadata...")
     metadatav1 = Metadata.getMetadataFromEmbedLink(args.content_asin)
 
