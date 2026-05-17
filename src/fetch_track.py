@@ -3,6 +3,7 @@ import asyncio
 import os
 import tempfile
 import requests
+import time
 from contextlib import contextmanager
 from keys import Keys
 from pathlib import Path
@@ -219,6 +220,8 @@ async def fetch_track(
     track_metadatav2.attach_lyrics(lyrics_obj)
 
     artwork_url = Metadata2.fetch_artwork_v2(track_asin, config)
+
+    print("artwork_url:", artwork_url)
 
     with download_temp_artwork(artwork_url, temp_dir) as artwork_path:
         embed_metadata_and_cover(

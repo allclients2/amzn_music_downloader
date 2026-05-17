@@ -6,9 +6,12 @@ import logging
 import traceback
 import multiprocessing
 import re
+import sys
+import platform
+from datetime import datetime, timezone
+from pathlib import Path
 
 from discord import app_commands
-from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,10 +29,14 @@ TMPFILES_UPLOAD_URL = "https://tmpfiles.org/api/v1/upload"
 OUTPUT_DIR = Path("./downloads")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+COOKIES_FILE = Path(os.getenv("COOKIES_FILE", "cookies.txt"))
+
 # ── Bot setup ─────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
+
+BOT_START_TIME = datetime.now(timezone.utc)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -71,6 +78,80 @@ def make_embed(title: str, description: str, color: discord.Color) -> discord.Em
     embed = discord.Embed(title=title, description=description, color=color)
     embed.set_footer(text="Music Downloader Bot")
     return embed
+
+
+def format_uptime(delta_seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string."""
+    total = int(delta_seconds)
+    days, remainder = divmod(total, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def get_downloads_stats(directory: Path) -> tuple[int, int, str]:
+    """Return (session_count, file_count, human_size) for the downloads folder."""
+    sessions = [d for d in directory.iterdir() if d.is_dir()] if directory.exists() else []
+    all_files = list(directory.rglob("*")) if directory.exists() else []
+    all_files = [f for f in all_files if f.is_file()]
+    total_bytes = sum(f.stat().st_size for f in all_files)
+
+    if total_bytes < 1024:
+        size_str = f"{total_bytes} B"
+    elif total_bytes < 1024 ** 2:
+        size_str = f"{total_bytes / 1024:.1f} KB"
+    elif total_bytes < 1024 ** 3:
+        size_str = f"{total_bytes / 1024 ** 2:.1f} MB"
+    else:
+        size_str = f"{total_bytes / 1024 ** 3:.2f} GB"
+
+    return len(sessions), len(all_files), size_str
+
+
+def check_download_config() -> tuple[list[str], bool]:
+    """
+    Check the health of download-related config without exposing sensitive values.
+    Returns (lines, all_ok).
+    """
+    lines = []
+    all_ok = True
+
+    # Cookies file
+    cookies_exists = COOKIES_FILE.exists()
+    cookies_nonempty = cookies_exists and COOKIES_FILE.stat().st_size > 0
+    if cookies_nonempty:
+        lines.append(f"✅ `cookies.txt` — found ({COOKIES_FILE.stat().st_size / 1024:.1f} KB)")
+    elif cookies_exists:
+        lines.append(f"⚠️ `cookies.txt` — exists but is empty")
+        all_ok = False
+    else:
+        lines.append(f"❌ `cookies.txt` — not found")
+        all_ok = False
+
+    # Output directory writable
+    output_writable = os.access(OUTPUT_DIR, os.W_OK)
+    if output_writable:
+        lines.append(f"✅ Output directory — writable")
+    else:
+        lines.append(f"❌ Output directory — not writable")
+        all_ok = False
+
+    # Min bitrate env var (optional, just report what's set)
+    min_bitrate = os.getenv("MIN_BITRATE")
+    if min_bitrate:
+        lines.append(f"✅ Min bitrate — `{min_bitrate}`")
+    else:
+        lines.append(f"ℹ️ Min bitrate — not set (uses max)")
+
+    return lines, all_ok
 
 
 # ── Process runner with progress updates ─────────────────────────────────────
@@ -154,6 +235,7 @@ async def send_error(interaction: discord.Interaction, e: Exception):
 
 # ── Slash Commands ────────────────────────────────────────────────────────────
 
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @tree.command(name="download", description="Download a track or album by ASIN — type is auto-detected")
 @app_commands.describe(asin="Track or album ASIN (e.g. B0CXYZ1234)")
 async def download(interaction: discord.Interaction, asin: str):
@@ -247,7 +329,7 @@ async def download(interaction: discord.Interaction, asin: str):
     except Exception as e:
         await send_error(interaction, e)
 
-
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @tree.command(name="metadata", description="Fetch metadata for a track or album")
 @app_commands.describe(asin="The track or album ASIN")
 async def show_metadata(interaction: discord.Interaction, asin: str):
@@ -327,6 +409,96 @@ async def show_metadata(interaction: discord.Interaction, asin: str):
 
             embed.add_field(name="Tracks", value="\n".join(lines) or "—", inline=False)
 
+        await interaction.edit_original_response(embed=embed)
+
+    except Exception as e:
+        await send_error(interaction, e)
+
+
+@discord.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@tree.command(name="status", description="Show bot health, uptime, and configuration status")
+async def status(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    try:
+        now = datetime.now(timezone.utc)
+        uptime_seconds = (now - BOT_START_TIME).total_seconds()
+
+        # ── Download config checks ────────────────────────────────────────────
+        config_lines, all_config_ok = check_download_config()
+
+        # ── Downloads folder stats ────────────────────────────────────────────
+        session_count, file_count, cache_size = get_downloads_stats(OUTPUT_DIR)
+
+        # ── Registered commands ───────────────────────────────────────────────
+        registered_cmds = [cmd.name for cmd in tree.get_commands()]
+
+        # ── Build embed ───────────────────────────────────────────────────────
+        overall_color = discord.Color.green() if all_config_ok else discord.Color.orange()
+        embed = discord.Embed(
+            title="Bot Status",
+            color=overall_color,
+            timestamp=now,
+        )
+
+        # Bot info
+        embed.add_field(
+            name="Bot",
+            value=(
+                f"**Name:** {client.user}\n"
+                f"**ID:** `{client.user.id}`\n"
+                f"**Guilds:** {len(client.guilds)}\n"
+                f"**Latency:** {round(client.latency * 1000)} ms"
+            ),
+            inline=True,
+        )
+
+        # Uptime
+        embed.add_field(
+            name="⏱️ Uptime",
+            value=(
+                f"**Up for:** {format_uptime(uptime_seconds)}\n"
+                f"**Since:** <t:{int(BOT_START_TIME.timestamp())}:F>"
+            ),
+            inline=True,
+        )
+
+        # Commands
+        embed.add_field(
+            name="Commands",
+            value="\n".join(f"`/{c}`" for c in sorted(registered_cmds)) or "None",
+            inline=True,
+        )
+
+        # Download config
+        embed.add_field(
+            name=f"{'✅' if all_config_ok else '⚠️'} Download Config",
+            value="\n".join(config_lines),
+            inline=False,
+        )
+
+        # Downloads cache
+        embed.add_field(
+            name="💾 Cache",
+            value=(
+                f"**Sessions:** {session_count}\n"
+                f"**Files:** {file_count}\n"
+                f"**Size:** {cache_size}"
+            ),
+            inline=True,
+        )
+
+        # Runtime
+        embed.add_field(
+            name="Runtime",
+            value=(
+                f"**Python:** {sys.version.split()[0]}\n"
+                f"**discord.py:** {discord.__version__}\n"
+                f"**OS:** {platform.system()} {platform.release()}"
+            ),
+            inline=True,
+        )
+
+        embed.set_footer(text="Music Downloader Bot • Status checked at")
         await interaction.edit_original_response(embed=embed)
 
     except Exception as e:
