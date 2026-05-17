@@ -1,0 +1,6 @@
+requests
+playwright
+discord.py
+python-dotenv
+mutagen
+beautifulsoup4
