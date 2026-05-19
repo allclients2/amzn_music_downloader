@@ -4,3 +4,4 @@ discord.py
 python-dotenv
 mutagen
 beautifulsoup4
+browser-cookie3

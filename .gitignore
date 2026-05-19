@@ -7,3 +7,7 @@ downloads
 _testcookie.py
 *.env
 *config_cache.json
+cookies.txt
+output
+.venv
+.vscode
