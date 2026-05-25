@@ -2,12 +2,9 @@
 *.mp4
 *.lrc
 config.json
-response*.json
 downloads
-_testcookie.py
-*.env
-*config_cache.json
-cookies.txt
 output
+*.env
+*cookies.txt
 .venv
 .vscode
