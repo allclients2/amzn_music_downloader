@@ -166,7 +166,7 @@ def main_test():
     main.fetch_track = _fake_fetch_track
 
     sys.argv = ["test_cli.py", asin, "--default-quality", "HD"]
-    asyncio.run(main.main())
+    main.main()
 
 
 if __name__ == "__main__":

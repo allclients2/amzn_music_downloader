@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import sys
 from pathlib import Path
 
 import auth
@@ -15,8 +16,11 @@ from progress import Progress
 DOWNLOAD_CONCURRENCY = 5
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Download a track or album from Amazon Music")
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Download a track or album from Amazon Music",
+        epilog="Add an account: `python src/main.py login [COUNTRY_CODE]`",
+    )
 
     parser.add_argument(
         "content_asin",
@@ -26,6 +30,12 @@ def parse_args():
         "--version",
         action="version",
         version=f"downloader v{VERSION}",
+    )
+    parser.add_argument(
+        "--account",
+        default=None,
+        help="Which stored account to use: customer id, name, or country code "
+             "(default: config default_account, else the only/selected account)",
     )
     parser.add_argument(
         "--output",
@@ -48,11 +58,10 @@ def parse_args():
         help="Path to the Widevine device file (default: config default_wvd_path)",
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-async def main():
-    args = parse_args()
+async def run_download(args):
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
 
     # CLI flags override the stored config defaults (generated on first run).
@@ -62,10 +71,52 @@ async def main():
     output_dir = Path(args.output or settings["default_output"])
 
     # Builds a signed session from stored credentials; signs in interactively
-    # (browser OAuth) on first use and persists the login.
-    session = auth.get_session()
+    # (browser OAuth) on first use and persists the login. `--account` picks among
+    # several stored accounts (id / name / country); omitted uses the default/sole one.
+    session = auth.get_session(account=args.account)
 
     await download(session, args.content_asin, output_dir, quality, wvd_path, plain=args.verbose)
+
+
+def run_login(argv):
+    """`python src/main.py login [COUNTRY_CODE]` — interactive sign-in that adds a
+    new account to the store (config.json `accounts` + credentials.bin)."""
+    parser = argparse.ArgumentParser(
+        prog="main.py login",
+        description="Sign in to Amazon Music and add the account to the store.",
+    )
+    parser.add_argument(
+        "country",
+        nargs="?",
+        default=None,
+        help="2-letter region code to sign in to (e.g. US, GB, JP). Prompted if omitted.",
+    )
+    args = parser.parse_args(argv)
+
+    country = args.country or input(
+        "Enter the 2-letter region code to sign in (e.g. US, GB, DE, JP): "
+    ).strip()
+    try:
+        auth.login(country)
+    except (ValueError, TypeError) as exc:
+        # Bad/unknown country code — fail cleanly before the browser step.
+        print(f"Login failed: {exc}")
+        sys.exit(1)
+
+    accounts = config.load_accounts()
+    print(f"\nStored accounts ({len(accounts)}):")
+    for account_id, info in accounts.items():
+        name = info.get("name") or "Unknown"
+        region = info.get("region") or info.get("country") or "?"
+        print(f"  - {name} — {region} [{account_id}]")
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv and argv[0] == "login":
+        run_login(argv[1:])
+        return
+    asyncio.run(run_download(parse_args(argv)))
 
 
 async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False):
@@ -131,4 +182,4 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

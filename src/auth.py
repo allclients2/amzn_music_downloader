@@ -6,8 +6,10 @@ with RSA-signed requests.
 
 The first run performs an interactive browser sign-in (the user pastes the
 post-login URL back). Credentials are pickled to `config/credentials.bin`, keyed
-by country so several regions can be stored side by side, and the access token is
-refreshed automatically when it expires.
+by Amazon `customer_id` so several accounts can be stored side by side (including
+multiple in the same region); each account's public metadata (name, country) is
+mirrored into `config/config.json`'s `accounts` table for selection/display.
+Access tokens are refreshed automatically when they expire.
 """
 
 import os
@@ -38,24 +40,76 @@ def _credentials_path() -> Path:
     return CREDENTIALS_FILE
 
 
+def _account_key(credentials: AmazonMusicMobileAPICredentials) -> str:
+    """The registry/store key for an account: its Amazon `customer_id`, falling
+    back to the region's country code on the rare chance the id wasn't recorded."""
+    return credentials.customer_id or credentials.account_region.country
+
+
+def _account_info(credentials: AmazonMusicMobileAPICredentials) -> dict:
+    """The public metadata mirrored into `config.json['accounts']` for an account."""
+    region = credentials.account_region
+    return {
+        "name": (credentials.customer_info or {}).get("name") or "Unknown",
+        "country": region.country if region else None,
+        "region": region.pretty_name if region else None,
+    }
+
+
 def _load_store() -> dict:
-    """Return the `{country: AmazonMusicMobileAPICredentials}` store (may be empty)."""
+    """Return the `{customer_id: AmazonMusicMobileAPICredentials}` store (may be empty).
+
+    Older stores were keyed by country code; they're transparently re-keyed by
+    `customer_id` here so several accounts can coexist (including multiple in one
+    region). The re-keyed layout is written back on the next save."""
     path = _credentials_path()
     if not path.exists():
         return {}
     try:
         with open(path, "rb") as fh:
             data = pickle.load(fh)
-        return data if isinstance(data, dict) else {}
     except Exception as exc:  # corrupt/unreadable store -> treat as logged out
         print(f"warning: could not read {path} ({exc}); ignoring.")
         return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        _account_key(creds): creds
+        for creds in data.values()
+        if isinstance(creds, AmazonMusicMobileAPICredentials)
+    }
 
 
 def _save_store(store: dict) -> None:
     CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(CREDENTIALS_FILE, "wb") as fh:
         pickle.dump(store, fh)
+
+
+def _sync_accounts(store: dict) -> None:
+    """Mirror the credential store into `config.json['accounts']` (upsert-only;
+    writes only when something actually changed, so it's cheap to call on load)."""
+    current = config.load_accounts()
+    merged = dict(current)
+    changed = False
+    for account_id, creds in store.items():
+        info = _account_info(creds)
+        if current.get(account_id) != info:
+            merged[account_id] = info
+            changed = True
+    if changed:
+        config.save_accounts(merged)
+
+
+def _save_account(credentials: AmazonMusicMobileAPICredentials) -> str:
+    """Persist one account's credentials and mirror its metadata into config.json.
+    Used by both login and token refresh. Returns the account id (customer_id)."""
+    account_id = _account_key(credentials)
+    store = _load_store()
+    store[account_id] = credentials
+    _save_store(store)
+    _sync_accounts(store)
+    return account_id
 
 def read_long_line(prompt=""):
     sys.stdout.write(prompt)
@@ -115,50 +169,128 @@ def login(country: str) -> AmazonMusicMobileAPI:
         oauth_flow_callback=_cli_oauth_callback,
     )
 
-    store = _load_store()
-    store[inst.credentials.account_region.country] = inst.credentials
-    _save_store(store)
-    print(f"Saved credentials for {inst.credentials.account_region.pretty_name}.")
+    account_id = _save_account(inst.credentials)
+    info = _account_info(inst.credentials)
+    print(f"Saved account '{info['name']}' ({info['region']}) [{account_id}].")
     return inst
 
 
 def _prompt_country() -> str:
-    print("No saved Amazon Music login found.")
     return input("Enter your 2-letter region code (e.g. US, GB, DE, JP): ").strip().upper()
 
 
-def get_session(country: str | None = None, interactive: bool = True) -> AmazonMusicMobileAPI:
-    """Return a ready-to-use signed session, signing in interactively if needed.
+def _account_label(account_id: str, store: dict, accounts: dict | None = None) -> str:
+    """A short human label for an account id, for menus and error messages."""
+    accounts = config.load_accounts() if accounts is None else accounts
+    info = accounts.get(account_id) or _account_info(store[account_id])
+    name = info.get("name") or "Unknown"
+    region = info.get("region") or info.get("country") or "?"
+    return f"{name} — {region} [{account_id}]"
 
-    `country` selects which stored login to use (for multi-region stores). When
-    omitted, the only stored region is used, or the user is prompted to sign in.
-    Set `interactive=False` (e.g. in the bot worker subprocess) to raise instead
-    of prompting when no usable credentials are stored.
-    """
-    store = _load_store()
+
+def _select_credentials(store: dict, account: str | None, country: str | None):
+    """Pick stored credentials by explicit account, by region, or by the default/
+    sole account. Returns the credentials, or None when the choice is ambiguous or
+    the requested region isn't stored yet (the caller decides whether to prompt)."""
+    if not store:
+        return None
+
+    if account:
+        key = account.strip()
+        if key in store:  # exact customer_id
+            return store[key]
+        # Otherwise match by account name (case-insensitive) or country code.
+        accounts = config.load_accounts()
+        for account_id, creds in store.items():
+            info = accounts.get(account_id) or _account_info(creds)
+            if ((info.get("name") or "").lower() == key.lower()
+                    or (info.get("country") or "").upper() == key.upper()):
+                return creds
+        labels = ", ".join(_account_label(a, store) for a in store)
+        raise RuntimeError(
+            f"No stored account matching '{account}'. Stored accounts: {labels}. "
+            f"Add one with `python src/main.py login`."
+        )
 
     if country:
-        country = country.strip().upper()
-        credentials = store.get(country)
-    elif len(store) == 1:
-        credentials = next(iter(store.values()))
-    else:
-        credentials = None
+        target = country.strip().upper()
+        for creds in store.values():
+            region = creds.account_region
+            if region and region.country == target:
+                return creds
+        return None  # region not stored yet -> caller may sign in for it
+
+    # Nothing requested: use the configured default, then the sole account, else None.
+    default = (config.get_settings().get("default_account") or "").strip()
+    if default and default in store:
+        return store[default]
+    if len(store) == 1:
+        return next(iter(store.values()))
+    return None  # zero, or several accounts with no way to choose
+
+
+def _prompt_account(store: dict) -> str | None:
+    """Interactively choose among several stored accounts. Returns the chosen
+    account id, or None to sign in to a brand-new account."""
+    accounts = config.load_accounts()
+    ids = list(store.keys())
+    print("Multiple Amazon Music accounts are stored:")
+    for i, account_id in enumerate(ids, 1):
+        print(f"  {i}. {_account_label(account_id, store, accounts)}")
+    add_choice = len(ids) + 1
+    print(f"  {add_choice}. Add a new account")
+    raw = input(f"Select an account [1-{add_choice}]: ").strip()
+    if raw.isdigit() and 1 <= int(raw) <= len(ids):
+        return ids[int(raw) - 1]
+    return None
+
+
+def get_session(
+    account: str | None = None,
+    country: str | None = None,
+    interactive: bool = True,
+) -> AmazonMusicMobileAPI:
+    """Return a ready-to-use signed session, signing in interactively if needed.
+
+    `account` selects a stored account by id (customer_id), name, or country code;
+    `country` selects by region. With neither, the `default_account` from config is
+    used, or the sole stored account, or — when interactive — the user is asked to
+    pick one (or sign in). Set `interactive=False` (e.g. the bot worker subprocess)
+    to raise instead of prompting when no single account can be resolved.
+    """
+    store = _load_store()
+    _sync_accounts(store)  # keep config.json's accounts table current
+
+    credentials = _select_credentials(store, account, country)
 
     if credentials is None:
-        # Either nothing stored, or the requested region isn't stored yet.
         if not interactive:
+            if store:
+                labels = ", ".join(_account_label(a, store) for a in store)
+                raise RuntimeError(
+                    "Multiple Amazon Music accounts are stored and none was selected. "
+                    f"Set `default_account` in config/config.json (one of: {labels})."
+                )
             raise RuntimeError(
-                "No saved Amazon Music login. Run `python src/main.py <asin>` "
+                "No saved Amazon Music login. Run `python src/main.py login` "
                 "once to sign in before using the bot."
             )
-        target = country or _prompt_country()
-        return login(target)
+        # Interactive: choose among existing accounts, or sign in to a new one.
+        if store and account is None and country is None:
+            chosen = _prompt_account(store)
+            if chosen is not None:
+                credentials = store[chosen]
+            else:
+                return login(_prompt_country())
+        else:
+            # Nothing stored, or a specific region requested but not stored yet.
+            if not store:
+                print("No saved Amazon Music login found.")
+            return login(country or _prompt_country())
 
     session = AmazonMusicMobileAPI(credentials=credentials)
     if session.credentials.access_token_expired:
         print("Access token expired; refreshing...")
         session.refresh_access_token(force=True)
-        store[session.credentials.account_region.country] = session.credentials
-        _save_store(store)
+        _save_account(session.credentials)
     return session
