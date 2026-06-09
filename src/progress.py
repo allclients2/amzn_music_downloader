@@ -4,7 +4,7 @@ import threading
 import time
 import unicodedata
 
-VERSION = "2.0"
+from _version import VERSION
 
 # ── ANSI styling ────────────────────────────────────────────────────────────
 _BOLD = "\033[1m"
@@ -116,14 +116,17 @@ def _bar(width: int, frac: float) -> str:
 
 
 class _Slot:
-    """One in-flight track's step progress within an album download."""
-    __slots__ = ("name", "total", "n", "desc")
+    """One track's step progress within an album download. While it runs it
+    occupies a slot line; once finished it's removed from the display (its
+    position in the pool may be reused by the next track)."""
+    __slots__ = ("name", "total", "n", "desc", "done")
 
     def __init__(self, name: str, total: int):
         self.name = name
         self.total = max(1, total)
         self.n = 0
         self.desc = ""
+        self.done = False
 
 
 class Progress:
@@ -196,9 +199,10 @@ class Progress:
         slot = _Slot(name, steps)
         with self._lock:
             self.desc = name
-            # Reuse the lowest freed position so the slot lines stay put.
+            # Reuse the lowest finished (or empty) position so the slot lines
+            # stay put; otherwise grow the pool.
             for i, s in enumerate(self._slots):
-                if s is None:
+                if s is None or s.done:
                     self._slots[i] = slot
                     break
             else:
@@ -214,14 +218,14 @@ class Progress:
         self.render()
 
     def track_done(self, slot: _Slot):
-        # No render here: the freed slot is refilled by the next track_start (or
-        # the run ends in finish()), avoiding a one-frame gap in the slot lines.
+        # Mark the slot finished; it drops out of the rendered block (a later
+        # track_start may reuse its pool position) so the display shrinks as
+        # tracks complete.
         with self._lock:
             self.completed += 1
-            for i, s in enumerate(self._slots):
-                if s is slot:
-                    self._slots[i] = None
-                    break
+            slot.done = True
+            slot.n = slot.total
+        self.render()
 
     # ── public API: lifecycle ───────────────────────────────────────────────
     def finish(self, desc: str = None):
@@ -293,7 +297,7 @@ class Progress:
         # Reserve a fixed _DESC_MAX slot so the bar width stays constant.
         overhead = _disp_width(_BAR_MARK) + 1 + len(pct) + 1 + 1 + _DESC_MAX
         bar_w = max(10, term_w - overhead)
-        suffix = _DONE if self.done else _truncate(self.desc, _DESC_MAX)
+        suffix = _DONE if self.done else _paint(_truncate(self.desc, _DESC_MAX), _FAINT)
         return f"{_MARK_BAR} {pct} {_bar(bar_w, frac)} {suffix}"
 
     def _agg_frac(self) -> float:
@@ -302,7 +306,10 @@ class Progress:
         active = sum(s.n / s.total for s in self._slots if s)
         return min(1.0, (self.completed + active) / self.track_total)
 
-    def _agg_line(self, term_w: int) -> str:
+    def _agg_line(self, term_w: int, last: bool = False) -> str:
+        # `last` when no track slots follow: close the tree with "╰" instead
+        # of the "├" tee.
+        mark = _MARK_BAR if last else _MARK_AGG
         frac = 1.0 if self.done else self._agg_frac()
         pct = f"{int(frac * 100):>3}%"
         if self.done:
@@ -313,31 +320,40 @@ class Progress:
             elapsed = time.time() - (self.album_start or self.start)
             rate = self.completed / elapsed if elapsed > 0 else 0.0
             eta = (self.track_total - self.completed) / rate if rate > 0 else 0.0
-            suffix = f"{count}  [{_fmt_time(elapsed)}<{_fmt_time(eta)}, {rate:4.1f} tracks/s]"
+            suffix = _paint(
+                f"{count}  [{_fmt_time(elapsed)}<{_fmt_time(eta)}, {rate:4.1f} tracks/s]",
+                _FAINT,
+            )
         # Reserve a fixed suffix slot so the aggregate bar width stays constant.
         overhead = _disp_width(_AGG_MARK) + 1 + len(pct) + 1 + 1 + self._agg_reserve
         bar_w = max(10, term_w - overhead)
-        return f"{_MARK_AGG} {pct} {_bar(bar_w, frac)} {suffix}"
+        return f"{mark} {pct} {_bar(bar_w, frac)} {suffix}"
 
     def _slot_line(self, term_w: int, slot: _Slot, last: bool) -> str:
         mark = _MARK_SLOT_LAST if last else _MARK_SLOT
-        name = _fixed(slot.name, _SLOT_NAME_W)
-        frac = min(1.0, slot.n / slot.total)
+        name = _paint(_fixed(slot.name, _SLOT_NAME_W), _FAINT)
+        if slot.done:
+            frac = 1.0
+            suffix = _DONE
+        else:
+            frac = min(1.0, slot.n / slot.total)
+            suffix = _truncate(slot.desc, _SLOT_DESC_W)
         pct = f"{int(frac * 100):>3}%"
-        desc = _truncate(slot.desc, _SLOT_DESC_W)
         # mark "├─"/"╰─" is 2 cols; name + pct + desc are fixed-width reservations.
         overhead = 2 + 1 + _SLOT_NAME_W + 1 + len(pct) + 1 + 1 + _SLOT_DESC_W
         bar_w = max(8, term_w - overhead)
-        return f"{mark} {name} {pct} {_bar(bar_w, frac)} {desc}"
+        return f"{mark} {name} {pct} {_bar(bar_w, frac)} {suffix}"
 
     def _lines(self, term_w: int) -> list:
         lines = [self._header(term_w)]
         if self._album:
-            lines.append(self._agg_line(term_w))
-            if not self.done:
-                active = [s for s in self._slots if s]
-                for i, slot in enumerate(active):
-                    lines.append(self._slot_line(term_w, slot, last=(i == len(active) - 1)))
+            # Only in-flight tracks get a slot line; finished ones are dropped so
+            # the block shrinks as the album completes, ending on just the header
+            # and aggregate line.
+            active = [s for s in self._slots if s and not s.done]
+            lines.append(self._agg_line(term_w, last=not active))
+            for i, slot in enumerate(active):
+                lines.append(self._slot_line(term_w, slot, last=(i == len(active) - 1)))
         else:
             lines.append(self._single_line(term_w))
         return lines

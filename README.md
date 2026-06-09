@@ -11,7 +11,7 @@ usage: main.py [-h] [--output-dir OUTPUT_DIR] [--cookies-file COOKIES_FILE] [-v]
 
 Example:  `python src/main.py B07JZ7PW6F --from-browser --browser firefox --output-dir downloads`
 
-Created/Tested on Windows 11 25H2 with Python 3.13.12. Not yet tested for other platforms.
+Created/Tested on Windows 11 25H2 & macOS Tahoe 26.4.1 with Python 3.13.12.
 
 This can also be used as a bot. Simply add your bot token to `.env` then run `src/bot.py`. Early feature; may have bugs.
 
@@ -48,8 +48,17 @@ automatically. You pick your 2-letter region (US, GB, DE, JP, …) at login.
 (`MusicEnsembleService.lookup`) — batched ASIN lookup returning `tracksList` /
 `albumsList`: title, artist, album, **disc/track numbers**, track count, duration,
 ISRC, explicit flag, popularity, song writers, release date, copyright, label,
-genre, and 600×600 cover art. This replaces the old embed-page scraper (which was
-the only source of disc/track numbers).
+and genre. This replaces the old embed-page scraper (which was the only source of
+disc/track numbers).
+
+### Cover art — `textsearch` (`artOriginal`)
+The muse `image` field is only a 600×600 render. For full-resolution art the tool
+queries the catalog search service
+(`POST https://music.amazon.<tld>/<region>/api/textsearch/search/v1_1/`,
+`TenzingTextSearchService.search`) for the album/track ASINs and uses the
+`artOriginal.artUrl` master image (typically 1500–3000 px), exactly as OrpheusDL
+does. One search per album (shared by every track); falls back to the 600×600
+`image` if search returns nothing.
 
 ### Stream manifest — `getDashManifestsV2`
 `POST https://music.amazon.<tld>/<region>/api/dmls/getDashManifestsV2` — returns a

@@ -7,7 +7,8 @@ import auth
 from fetch_track import fetch_track, process_track
 from metadata import fetch_metadata
 from mpd_info import fetch_representations, select_representation
-from progress import VERSION, Progress
+from _version import VERSION
+from progress import Progress
 
 # How many album tracks to download concurrently.
 DOWNLOAD_CONCURRENCY = 5

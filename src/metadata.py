@@ -70,11 +70,68 @@ def _ms_to_date(ms) -> Optional[str]:
 
 
 def _upgrade_cover(url: Optional[str]) -> Optional[str]:
-    """Bump an Amazon image URL to a larger size (best effort)."""
+    """Bump an Amazon image URL to a larger size (best effort).
+
+    Only used as a fallback for the muse `image` asset (a 600px render). The
+    preferred path is `_hi_res_cover`, which pulls the original master art.
+    """
     if not url:
         return url
     # Replace any `._SX600_` / `._SY600_` / `._SL600_` / `._UX...` size token.
     return re.sub(r"\._(S[XYL]|U[XY])\d+_", "._SL1200_", url)
+
+
+def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> Optional[str]:
+    """Original full-resolution cover via the search API (`artOriginal.artUrl`).
+
+    The muse `image` field is only a 600px asset. The textsearch service exposes
+    `artOriginal.artUrl` — the original master art (often 1500-3000px+) — which is
+    what OrpheusDL embeds. Best effort: any failure falls back to the muse image
+    with its size token rewritten upward.
+    """
+    fallback = _upgrade_cover(album_data.get("image"))
+
+    artist = (
+        album_data.get("primaryArtistName")
+        or (album_data.get("artist") or {}).get("name")
+        or ""
+    )
+    title = album_data.get("title") or ""
+    asins = [
+        a
+        for a in (
+            album_data.get("asin"),
+            album_data.get("globalAsin"),
+            album_data.get("requestedAsin"),
+        )
+        if a
+    ]
+    asins += [t.get("asin") for t in album_data.get("tracks", []) if t.get("asin")]
+    if not asins:
+        return fallback
+
+    try:
+        doc = session.search(
+            query=f'"{artist}" - "{title}"',
+            asins=tuple(asins),
+            search_types=("catalog_album", "catalog_track"),
+            limit=100,
+            region_to_use=session.credentials.account_region,
+        )
+    except Exception:
+        return fallback
+
+    if not isinstance(doc, dict):
+        return fallback
+
+    art = doc.get("artOriginal") or {}
+    url = art.get("artUrl") if isinstance(art, dict) else None
+    if not url:
+        album_art = (doc.get("metadata") or {}).get("albumArt") or {}
+        url = album_art.get("url") if isinstance(album_art, dict) else None
+    # `artOriginal.artUrl` is a bare master URL (no size token) = original
+    # resolution, so we return it as-is.
+    return str(url) if url else fallback
 
 
 def _composers(track_data: dict) -> Optional[str]:
@@ -91,7 +148,9 @@ def _album_release_date(album_data: dict) -> Optional[str]:
     )
 
 
-def _build_track(track_data: dict, album_data: dict, disc_total: int) -> TrackMetadata:
+def _build_track(
+    track_data: dict, album_data: dict, disc_total: int, cover_url: Optional[str]
+) -> TrackMetadata:
     product = album_data.get("productDetails") or {}
     return TrackMetadata(
         asin=track_data.get("asin"),
@@ -116,7 +175,7 @@ def _build_track(track_data: dict, album_data: dict, disc_total: int) -> TrackMe
         copyright=product.get("copyright"),
         label=product.get("label"),
         genre=product.get("primaryGenreName"),
-        cover_url=_upgrade_cover(album_data.get("image")),
+        cover_url=cover_url,
     )
 
 
@@ -167,7 +226,10 @@ def fetch_metadata(
         album_data = next((a for a in albums_list if a.get("asin") == album_asin), None)
         if not album_data:
             album_data = _fetch_album_data(session, album_asin)
-        return "track", _build_track(track_data, album_data, _disc_total(album_data))
+        cover_url = _hi_res_cover(session, album_data)
+        return "track", _build_track(
+            track_data, album_data, _disc_total(album_data), cover_url
+        )
 
     # ── Full album ────────────────────────────────────────────────────────
     album_data = album_match or (albums_list[0] if albums_list else None)
@@ -180,12 +242,15 @@ def fetch_metadata(
     track_asins = [t.get("asin") for t in light_tracks if t.get("asin")]
     rich = _fetch_tracks(session, track_asins)
 
+    # One search call for the whole album; every track shares the same cover.
+    cover_url = _hi_res_cover(session, album_data)
+
     tracks: List[TrackMetadata] = []
     for lt in light_tracks:
         asin = lt.get("asin")
         # Prefer the rich per-track record; fall back to the album's lightweight one.
         td = rich.get(asin, lt)
-        tracks.append(_build_track(td, album_data, disc_total))
+        tracks.append(_build_track(td, album_data, disc_total, cover_url))
 
     product = album_data.get("productDetails") or {}
     album = AlbumMetadata(
@@ -193,7 +258,7 @@ def fetch_metadata(
         artist_name=album_data.get("primaryArtistName")
         or (album_data.get("artist") or {}).get("name"),
         album_asin=album_data.get("asin"),
-        cover_url=_upgrade_cover(album_data.get("image")),
+        cover_url=cover_url,
         release_date=_album_release_date(album_data),
         copyright=product.get("copyright"),
         label=product.get("label"),
