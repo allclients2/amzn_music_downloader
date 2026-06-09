@@ -4,7 +4,8 @@ import logging
 from pathlib import Path
 
 import auth
-from fetch_track import fetch_track, process_track
+import config
+from fetch_track import fetch_track, process_track, purge_temp_dir
 from metadata import fetch_metadata
 from mpd_info import fetch_representations, select_representation
 from _version import VERSION
@@ -27,9 +28,9 @@ def parse_args():
         version=f"downloader v{VERSION}",
     )
     parser.add_argument(
-        "--output-dir",
-        default="output",
-        help="Directory to save the file (default: current directory)",
+        "--output",
+        default=None,
+        help="Directory to save the file (default: config default_output)",
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -37,34 +38,37 @@ def parse_args():
         help="Enable verbose logging",
     )
     parser.add_argument(
-        "--min-bitrate",
+        "--default-quality",
         default=None,
-        help="Minimum bitrate in kbps, or 'min' or 'max' (default: interactive picker)",
+        help="Max quality tier to use: SD, HD, or UHD (default: config default_quality)",
+    )
+    parser.add_argument(
+        "--wvd-path",
+        default=None,
+        help="Path to the Widevine device file (default: config default_wvd_path)",
     )
 
-    args = parser.parse_args()
-
-    if args.min_bitrate and args.min_bitrate.isdigit():
-        args.min_bitrate = int(args.min_bitrate)
-    elif args.min_bitrate not in ("min", "max"):
-        args.min_bitrate = None
-
-    return args
+    return parser.parse_args()
 
 
 async def main():
     args = parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
 
+    # CLI flags override the stored config defaults (generated on first run).
+    settings = config.get_settings()
+    quality = args.default_quality or settings["default_quality"]
+    wvd_path = args.wvd_path or settings["default_wvd_path"]
+    output_dir = Path(args.output or settings["default_output"])
+
     # Builds a signed session from stored credentials; signs in interactively
     # (browser OAuth) on first use and persists the login.
     session = auth.get_session()
 
-    output_dir = Path(args.output_dir)
-    await download(session, args.content_asin, output_dir, args.min_bitrate, plain=args.verbose)
+    await download(session, args.content_asin, output_dir, quality, wvd_path, plain=args.verbose)
 
 
-async def download(session, asin, output_dir, min_bitrate, plain=False):
+async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False):
     prog = Progress(asin=asin, plain=plain)
     prog.set_desc("fetching metadata, manifest & lyrics")
 
@@ -90,14 +94,11 @@ async def download(session, asin, output_dir, min_bitrate, plain=False):
             if isinstance(representations, Exception) or not representations:
                 # Speculative manifest failed (rare for a track) — fetch directly.
                 representations = fetch_representations(session, asin)
-            # With no --min-bitrate this drops into the interactive curses
-            # picker, which must own the terminal — suspend the bar around it.
-            with prog.paused():
-                representation = select_representation(asin, representations, min_bitrate)
+            representation = select_representation(asin, representations, quality)
             lyrics_resp = None if isinstance(lyrics_res, Exception) else lyrics_res
             await process_track(
                 session, meta, representation, output_dir, True, lyrics_resp,
-                on_step=lambda desc: prog.update(desc),
+                on_step=lambda desc: prog.update(desc), wvd_path=wvd_path,
             )
             prog.finish()
         else:
@@ -113,8 +114,9 @@ async def download(session, asin, output_dir, min_bitrate, plain=False):
                     slot = prog.track_start(track.title)
                     try:
                         await fetch_track(
-                            session, track, output_dir, min_bitrate,
+                            session, track, output_dir, quality,
                             on_step=lambda desc: prog.track_step(slot, desc),
+                            wvd_path=wvd_path,
                         )
                     finally:
                         prog.track_done(slot)
@@ -124,6 +126,8 @@ async def download(session, asin, output_dir, min_bitrate, plain=False):
     except Exception:
         prog.abort()
         raise
+    finally:
+        purge_temp_dir(output_dir)
 
 
 if __name__ == "__main__":

@@ -4,9 +4,9 @@ Pipeline: signed manifest -> download encrypted file from BaseURL -> Widevine
 content key (signed license) -> mp4decrypt -> ffmpeg remux to .flac (lossless
 copy of the FLAC stream) -> mutagen FLAC tags + embedded cover -> sidecar .lrc.
 
-Output is now `.flac` (was `.mp4`) so the full metadata the muse API provides is
-preserved. The folder layout (`<album_artist>/<album>/`) and filename builder are
-unchanged.
+Files land at `<output_dir>/<album_artist>/<album>/<disc> - <track> <title>.flac`;
+the `<album_artist>/<album>/` folders are skipped when `build_folder_structure`
+is False (the bot writes flat into a per-request directory).
 """
 
 import asyncio
@@ -35,6 +35,19 @@ _UA = (
 )
 # FLAC Picture type 3 = front cover.
 _FRONT_COVER = 3
+
+# Shared scratch directory (under the output dir) for per-track encrypted /
+# decrypted / remuxed files; each track works in its own subdir inside it.
+_TEMP_SUBDIR = ".downloader"
+
+
+def purge_temp_dir(output_dir: Path) -> None:
+    """Remove the shared scratch directory after a download batch finishes.
+
+    Each track already deletes its own subdir; this clears the empty parent that
+    would otherwise be left behind. Safe to call when it doesn't exist.
+    """
+    shutil.rmtree(Path(output_dir) / _TEMP_SUBDIR, ignore_errors=True)
 
 
 @contextmanager
@@ -155,6 +168,7 @@ async def process_track(
     build_folder_structure: bool = True,
     lyrics_resp=None,
     on_step=None,
+    wvd_path: str = "device.wvd",
 ):
     """Download + decrypt + remux + tag, given an already-selected representation.
 
@@ -190,14 +204,14 @@ async def process_track(
 
     # Per-track temp dir so concurrent downloads don't clobber each other's
     # encrypted/decrypted/remuxed scratch files.
-    base_temp = output_dir / ".downloader"
+    base_temp = output_dir / _TEMP_SUBDIR
     base_temp.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix="dl-", dir=base_temp))
     encrypted_file = temp_dir / "encrypted.mp4"
 
     step("downloading track")
     coros = [
-        asyncio.to_thread(Keys.getContentKeys, session, track.asin, rep["pssh"]),
+        asyncio.to_thread(Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path),
         asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
     ]
     fetch_lyrics = lyrics_resp is None
@@ -245,14 +259,16 @@ async def fetch_track(
     session,
     track: TrackMetadata,
     output_dir: Path,
-    min_bitrate,
+    quality,
     build_folder_structure: bool = True,
     on_step=None,
+    wvd_path: str = "device.wvd",
 ):
     """Album/general path: fetch the manifest, select a stream, then process."""
     if on_step:
         on_step("fetching manifest")
-    representation = await asyncio.to_thread(find_representation, session, track.asin, min_bitrate)
+    representation = await asyncio.to_thread(find_representation, session, track.asin, quality)
     await process_track(
-        session, track, representation, output_dir, build_folder_structure, on_step=on_step
+        session, track, representation, output_dir, build_folder_structure,
+        on_step=on_step, wvd_path=wvd_path,
     )

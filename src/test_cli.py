@@ -131,7 +131,7 @@ def _fake_representations(session, asin):
 
 async def _fake_process_track(session, track, representation, output_dir,
                               build_folder_structure=True, lyrics_resp=None,
-                              on_step=None):
+                              on_step=None, wvd_path="device.wvd"):
     """Simulate the single-track pipeline, driving the progress bar via on_step."""
     for desc, delay in _FAKE_STEPS:
         if on_step:
@@ -139,8 +139,9 @@ async def _fake_process_track(session, track, representation, output_dir,
         await asyncio.sleep(delay)
 
 
-async def _fake_fetch_track(session, track, output_dir, min_bitrate,
-                            build_folder_structure=True, on_step=None):
+async def _fake_fetch_track(session, track, output_dir, quality,
+                            build_folder_structure=True, on_step=None,
+                            wvd_path="device.wvd"):
     """Simulate one album track, driving its slot's step bar via on_step."""
     for desc, delay in _FAKE_ALBUM_STEPS:
         if on_step:
@@ -157,15 +158,14 @@ def main_test():
     asin = argv[0] if argv else (_FAKE_ALBUM_ASIN if album else _FAKE_TRACK_ASIN)
 
     # Patch every network/IO boundary on the `main` module namespace so the real
-    # download() orchestration and Progress rendering run unchanged.
+    # download() orchestration and Progress rendering run for real, unmocked.
     main.auth.get_session = lambda *a, **k: FakeSession()
     main.fetch_metadata = _fake_album_metadata if album else _fake_track_metadata
     main.fetch_representations = _fake_representations
     main.process_track = _fake_process_track
     main.fetch_track = _fake_fetch_track
 
-    # `--min-bitrate max` avoids the interactive stream picker.
-    sys.argv = ["test_cli.py", asin, "--min-bitrate", "max"]
+    sys.argv = ["test_cli.py", asin, "--default-quality", "HD"]
     asyncio.run(main.main())
 
 

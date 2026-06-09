@@ -144,12 +144,12 @@ def check_download_config() -> tuple[list[str], bool]:
         lines.append(f"❌ Output directory — not writable")
         all_ok = False
 
-    # Min bitrate env var (optional, just report what's set)
-    min_bitrate = os.getenv("MIN_BITRATE")
-    if min_bitrate:
-        lines.append(f"✅ Min bitrate — `{min_bitrate}`")
-    else:
-        lines.append(f"ℹ️ Min bitrate — not set (uses max)")
+    # Quality tier from config (default_quality).
+    try:
+        import config
+        lines.append(f"✅ Quality — `{config.get_settings()['default_quality']}`")
+    except Exception as exc:
+        lines.append(f"⚠️ Quality — could not read config ({exc})")
 
     return lines, all_ok
 

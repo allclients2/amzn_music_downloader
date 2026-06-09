@@ -1,9 +1,9 @@
 """Widevine content-key acquisition.
 
-The license exchange now goes through the signed `getLicenseForPlaybackV2`
-endpoint via the vendored `AmazonMusicMobileAPI.get_license_response()` (RSA
-signed), replacing the old web-player `accessToken`/CSRF request. The pywidevine
-challenge/parse/keys flow is unchanged and still uses `device.wvd`.
+Builds a `pywidevine` license challenge from a provisioned Widevine device file,
+exchanges it through the signed `getLicenseForPlaybackV2` endpoint
+(`AmazonMusicMobileAPI.get_license_response()`), and returns the decrypted content
+key as a `kid:key` string for `mp4decrypt`.
 """
 
 import base64
@@ -18,12 +18,12 @@ _log = logging.getLogger("downloader.keys")
 
 class Keys:
     @staticmethod
-    def getContentKeys(session, asin: str, psshStr: str) -> str:
+    def getContentKeys(session, asin: str, psshStr: str, wvd_path: str = "device.wvd") -> str:
         # PSSH usually lives in the MPD ContentProtection (web/TRACK_PSSH here).
         pssh = PSSH(psshStr)
 
         # Load the provisioned Widevine device + CDM.
-        device = Device.load("device.wvd")
+        device = Device.load(wvd_path)
         cdm = Cdm.from_device(device)
 
         session_id = cdm.open()

@@ -2,6 +2,7 @@
 *.mp4
 *.lrc
 config.json
+config/
 downloads
 output
 *L*.md

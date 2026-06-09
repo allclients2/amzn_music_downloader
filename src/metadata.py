@@ -1,10 +1,10 @@
-"""Metadata via OrpheusDL's `muse` API (replaces the old embed-page scraper).
+"""Track & album metadata via the `muse` API.
 
-The previous implementation scraped `music.amazon.co.jp/embed/{asin}` with
-BeautifulSoup and was the only source of disc/track numbers. The vendored
-`AmazonMusicMobileAPI.get_metadata()` (the `muse` endpoint) returns disc/track
-numbers plus richer tags (release date, copyright, label, genre, ISRC, explicit,
-popularity, composers) over a signed API call — no scraping, fully multi-region.
+Resolves an ASIN to a `TrackMetadata` or `AlbumMetadata` dataclass using the
+signed `AmazonMusicMobileAPI.get_metadata()` (`muse`) endpoint, which supplies
+disc/track numbers, duration, ISRC, explicit flag, popularity, composers, and the
+album tags (release date, copyright, label, genre). Full-resolution cover art is
+resolved separately through `textsearch` (`artOriginal.artUrl`).
 """
 
 import re

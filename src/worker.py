@@ -26,10 +26,14 @@ def run(task: str, asin: str, output_dir: str, result_queue, progress_queue=None
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
         import auth
-        from fetch_track import fetch_track
+        import config
+        from fetch_track import fetch_track, purge_temp_dir
         from metadata import fetch_metadata
 
         output_path = Path(output_dir)
+        settings = config.get_settings()
+        quality = settings["default_quality"]
+        wvd_path = settings["default_wvd_path"]
 
         progress("🔐 Loading Amazon Music session…")
         session = auth.get_session(interactive=False)
@@ -81,8 +85,12 @@ def run(task: str, asin: str, output_dir: str, result_queue, progress_queue=None
 
             progress(f"🎵 Downloading track: {meta.title}…")
             asyncio.run(
-                fetch_track(session, meta, output_path, "max", build_folder_structure=False)
+                fetch_track(
+                    session, meta, output_path, quality,
+                    build_folder_structure=False, wvd_path=wvd_path,
+                )
             )
+            purge_temp_dir(output_path)
 
             result_queue.put({"ok": True, "data": {
                 "type": "track",
@@ -106,10 +114,12 @@ def run(task: str, asin: str, output_dir: str, result_queue, progress_queue=None
                 for index, track in enumerate(meta.tracks):
                     progress(f"⬇️  [{index + 1}/{total}] {track.title}…")
                     await fetch_track(
-                        session, track, output_path, "max", build_folder_structure=False
+                        session, track, output_path, quality,
+                        build_folder_structure=False, wvd_path=wvd_path,
                     )
 
             asyncio.run(do_download_album())
+            purge_temp_dir(output_path)
 
             result_queue.put({"ok": True, "data": {
                 "type": "album",

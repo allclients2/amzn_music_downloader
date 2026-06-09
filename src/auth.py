@@ -1,14 +1,13 @@
 """Authentication for the Amazon Music downloader.
 
-Replaces the old Playwright `/config.json` web-player token scraping with
-OrpheusDL's device-registration OAuth + RSA-signed requests (vendored from
-`modules/amazonmusic` into `src/vendor/amazonmusic`).
+Builds the single signed `AmazonMusicMobileAPI` session that every stage
+(metadata, manifest, license, lyrics) shares. Auth is device-registration OAuth
+with RSA-signed requests.
 
-A single `AmazonMusicMobileAPI` session is built from persisted credentials and
-threaded through metadata, manifest, license and lyrics fetching. The first run
-performs an interactive browser sign-in (the user pastes the post-login URL);
-credentials are pickled to `credentials.bin` (keyed by country, so multiple
-regions can be stored) and refreshed automatically when the access token expires.
+The first run performs an interactive browser sign-in (the user pastes the
+post-login URL back). Credentials are pickled to `config/credentials.bin`, keyed
+by country so several regions can be stored side by side, and the access token is
+refreshed automatically when it expires.
 """
 
 import os
@@ -17,30 +16,44 @@ import termios
 import pickle
 from pathlib import Path
 
+import config
 from vendor.amazonmusic.azapi import AmazonMusicMobileAPI
 from vendor.amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
     AmazonRegion,
 )
 
-# Stored next to device.wvd (the program is run from the repo root).
-CREDENTIALS_FILE = Path(os.environ.get("AMZ_CREDENTIALS_FILE", "credentials.bin"))
+# Lives in the config/ folder (the program is run from the repo root). The env
+# override is kept for flexibility.
+CREDENTIALS_FILE = Path(os.environ.get("AMZ_CREDENTIALS_FILE", str(config.CREDENTIALS_FILE)))
+# Pre-config-folder location; read once so an existing login isn't lost on upgrade.
+_LEGACY_CREDENTIALS_FILE = Path("credentials.bin")
+
+
+def _credentials_path() -> Path:
+    """The store to read from: the configured path, or the legacy root file if
+    that's the only one present (it migrates to the configured path on save)."""
+    if not CREDENTIALS_FILE.exists() and _LEGACY_CREDENTIALS_FILE.exists():
+        return _LEGACY_CREDENTIALS_FILE
+    return CREDENTIALS_FILE
 
 
 def _load_store() -> dict:
     """Return the `{country: AmazonMusicMobileAPICredentials}` store (may be empty)."""
-    if not CREDENTIALS_FILE.exists():
+    path = _credentials_path()
+    if not path.exists():
         return {}
     try:
-        with open(CREDENTIALS_FILE, "rb") as fh:
+        with open(path, "rb") as fh:
             data = pickle.load(fh)
         return data if isinstance(data, dict) else {}
     except Exception as exc:  # corrupt/unreadable store -> treat as logged out
-        print(f"warning: could not read {CREDENTIALS_FILE} ({exc}); ignoring.")
+        print(f"warning: could not read {path} ({exc}); ignoring.")
         return {}
 
 
 def _save_store(store: dict) -> None:
+    CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(CREDENTIALS_FILE, "wb") as fh:
         pickle.dump(store, fh)
 

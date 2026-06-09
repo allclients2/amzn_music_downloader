@@ -12,7 +12,7 @@ shaped like::
     }
 
 Some regions/tracks return an unsynced-only payload (no `lines`); we fall back
-to any plain-text field. Replaces the old `fe.web` `SetLyricsMethod` parser.
+to any plain-text field.
 """
 
 from dataclasses import dataclass

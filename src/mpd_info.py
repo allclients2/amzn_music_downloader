@@ -1,11 +1,12 @@
-"""DASH manifest retrieval + parsing.
+"""DASH manifest retrieval, parsing, and stream selection.
 
-The manifest now comes from the signed `getDashManifestsV2` endpoint via the
-vendored `AmazonMusicMobileAPI` (replacing the old web-player `accessToken`/CSRF
-request). The DASH XML it returns carries both a GROUP_PSSH (entitlement) and a
-TRACK_PSSH (web playback). For the plain Widevine license path we use the
-**web PSSH**: the ContentProtection whose Widevine `schemeIdUri` has no `value`
-attribute (entitlement ones carry `value="AmzMusic-2019"`).
+Fetches the DASH manifest from the signed `getDashManifestsV2` endpoint, parses it
+into a list of representations, and picks one by quality tier (see
+`select_representation`).
+
+The DASH XML carries two Widevine `ContentProtection` blocks: a GROUP_PSSH
+(entitlement, marked `value="AmzMusic-2019"`) and a web TRACK_PSSH (no `value`).
+The plain-license path uses the **web PSSH** — the one with no `value` attribute.
 """
 
 import logging
@@ -13,9 +14,13 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html import unescape
 
-from mpd_selector import MPDStreamSelector
-
 _log = logging.getLogger("downloader.mpd")
+
+# Amazon's quality tiers, low → high. `default_quality` acts as a ceiling (like
+# OrpheusDL's `max_track_quality_to_use`): pick the best stream that doesn't
+# exceed it. SD = lossy opus, HD = CD-quality FLAC, UHD = hi-res FLAC.
+_QUALITY_RANK = {"SD": 1, "HD": 2, "UHD": 3}
+_DEFAULT_QUALITY = "HD"
 
 # Widevine DRM system id.
 _WIDEVINE_SCHEME = "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"
@@ -30,7 +35,7 @@ _NS = {
 class TrackRepresentation:
     track_asin: str
     mpd_representation: dict
-    min_bitrate: str
+    quality: str
 
 
 def _fetch_manifest_xml(session, track_asin: str) -> str:
@@ -48,41 +53,44 @@ def fetch_representations(session, track_asin: str) -> list:
     return parse_mpd(manifest_xml)
 
 
-def select_representation(track_asin: str, representations: list, min_bitrate):
-    """Pick one representation by bitrate (or the interactive picker)."""
+def _rep_rank(rep: dict) -> int:
+    """Quality-tier rank of a representation (unknown tiers sort below SD)."""
+    return _QUALITY_RANK.get(str(rep.get("track_type") or "").upper(), 0)
+
+
+def select_representation(track_asin: str, representations: list, quality):
+    """Pick the best representation at or below the `quality` tier ceiling."""
     if not representations:
         _log.warning("no available representations for %s", track_asin)
         return None
 
-    if min_bitrate == "max":
-        rep = max(representations, key=lambda r: int(r["bandwidth"]))
-    elif min_bitrate == "min":
-        rep = min(representations, key=lambda r: int(r["bandwidth"]))
-    elif isinstance(min_bitrate, int):
-        eligible = [r for r in representations if int(r["bandwidth"]) // 1000 >= min_bitrate]
-        rep = (
-            min(eligible, key=lambda r: int(r["bandwidth"]))
-            if eligible
-            else max(representations, key=lambda r: int(r["bandwidth"]))
-        )
+    ceiling = _QUALITY_RANK.get(str(quality or "").upper())
+    if ceiling is None:
+        _log.warning("unknown quality %r; falling back to %s", quality, _DEFAULT_QUALITY)
+        ceiling = _QUALITY_RANK[_DEFAULT_QUALITY]
+
+    eligible = [r for r in representations if _rep_rank(r) <= ceiling]
+    if eligible:
+        # Best stream within the ceiling.
+        rep = max(eligible, key=lambda r: int(r["bandwidth"]))
     else:
-        selector = MPDStreamSelector(representations)
-        result = selector.select()
-        if not result:
-            print("no track selection made.")
-            return None
-        rep = next(r for r in representations if r["base_url"] == result["base_url"])
+        # Everything is above the ceiling — fall back to the lowest tier on offer.
+        lowest = min(_rep_rank(r) for r in representations)
+        rep = max(
+            (r for r in representations if _rep_rank(r) == lowest),
+            key=lambda r: int(r["bandwidth"]),
+        )
 
     return TrackRepresentation(
         track_asin=track_asin,
         mpd_representation=rep,
-        min_bitrate=min_bitrate,
+        quality=quality,
     )
 
 
-def find_representation(session, track_asin: str, min_bitrate) -> TrackRepresentation:
+def find_representation(session, track_asin: str, quality) -> TrackRepresentation:
     """Fetch the manifest and select a representation (used by the album path)."""
-    return select_representation(track_asin, fetch_representations(session, track_asin), min_bitrate)
+    return select_representation(track_asin, fetch_representations(session, track_asin), quality)
 
 
 def _web_pssh(adaptation) -> str:
