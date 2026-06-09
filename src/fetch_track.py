@@ -99,6 +99,12 @@ def remux_to_flac(src_mp4: Path, dst_flac: Path, codec: str) -> None:
         raise RuntimeError(f"ffmpeg remux failed:\n{result.stderr}")
 
 
+def _tag_track(flac_path: str, track: TrackMetadata, lyrics, temp_dir: str):
+    """Download the cover into `temp_dir` and embed tags + art (blocking)."""
+    with download_temp_artwork(track.cover_url, temp_dir) as artwork_path:
+        embed_metadata_and_cover(flac_path, track, lyrics, artwork_path)
+
+
 def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwork_path):
     audio = FLAC(flac_path)
     audio.delete()  # clear any tags carried over from the source container
@@ -182,8 +188,11 @@ async def process_track(
         _log.info("file %s already exists; skipping.", output_filename)
         return
 
-    temp_dir = output_dir / ".downloader"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    # Per-track temp dir so concurrent downloads don't clobber each other's
+    # encrypted/decrypted/remuxed scratch files.
+    base_temp = output_dir / ".downloader"
+    base_temp.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix="dl-", dir=base_temp))
     encrypted_file = temp_dir / "encrypted.mp4"
 
     step("downloading track")
@@ -199,27 +208,29 @@ async def process_track(
     if fetch_lyrics:
         lyrics_resp = results[2]
 
+    # The decrypt/remux/tag stages are blocking (subprocess + requests + mutagen);
+    # run them off the event loop so other concurrent tracks keep making progress.
     step("decrypting")
     decrypted_mp4 = temp_dir / "decrypted_temp.mp4"
     try:
-        subprocess.run(
+        await asyncio.to_thread(
+            subprocess.run,
             ["mp4decrypt", "--key", content_key, str(encrypted_file), str(decrypted_mp4)],
             check=True,
             capture_output=True,
         )
     except subprocess.CalledProcessError:
         _log.error("decryption failed for %s", track.title)
+        shutil.rmtree(temp_dir, ignore_errors=True)
         return
 
     step("remuxing to flac")
     flac_temp = temp_dir / "decoded_temp.flac"
-    remux_to_flac(decrypted_mp4, flac_temp, rep.get("codec"))
+    await asyncio.to_thread(remux_to_flac, decrypted_mp4, flac_temp, rep.get("codec"))
 
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
-
-    with download_temp_artwork(track.cover_url, temp_dir) as artwork_path:
-        embed_metadata_and_cover(str(flac_temp), track, lyrics_obj, artwork_path)
+    await asyncio.to_thread(_tag_track, str(flac_temp), track, lyrics_obj, str(temp_dir))
 
     flac_temp.rename(output_file)
     shutil.rmtree(temp_dir, ignore_errors=True)
@@ -236,7 +247,12 @@ async def fetch_track(
     output_dir: Path,
     min_bitrate,
     build_folder_structure: bool = True,
+    on_step=None,
 ):
     """Album/general path: fetch the manifest, select a stream, then process."""
-    representation = find_representation(session, track.asin, min_bitrate)
-    await process_track(session, track, representation, output_dir, build_folder_structure)
+    if on_step:
+        on_step("fetching manifest")
+    representation = await asyncio.to_thread(find_representation, session, track.asin, min_bitrate)
+    await process_track(
+        session, track, representation, output_dir, build_folder_structure, on_step=on_step
+    )

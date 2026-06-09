@@ -9,6 +9,9 @@ from metadata import fetch_metadata
 from mpd_info import fetch_representations, select_representation
 from progress import VERSION, Progress
 
+# How many album tracks to download concurrently.
+DOWNLOAD_CONCURRENCY = 5
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Download a track or album from Amazon Music")
@@ -61,7 +64,7 @@ async def main():
 
 
 async def download(session, asin, output_dir, min_bitrate, plain=False):
-    prog = Progress(asin=asin, total=5, unit="steps", plain=plain)
+    prog = Progress(asin=asin, plain=plain)
     prog.set_desc("fetching metadata, manifest & lyrics")
 
     try:
@@ -94,13 +97,25 @@ async def download(session, asin, output_dir, min_bitrate, plain=False):
             )
             prog.finish()
         else:
-            # Album: the progress bar tracks completed tracks (lower unit).
+            # Album: download up to DOWNLOAD_CONCURRENCY tracks at once. The
+            # aggregate line counts completed tracks; each in-flight track gets
+            # its own step-progress slot line.
             prog.set_name(meta.album_name)
-            prog.reconfigure(total=len(meta.tracks), unit="tracks")
-            for track in meta.tracks:
-                prog.set_desc(track.title)
-                await fetch_track(session, track, output_dir, min_bitrate)
-                prog.update()
+            prog.begin_album(len(meta.tracks))
+            sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+
+            async def run_track(track):
+                async with sem:
+                    slot = prog.track_start(track.title)
+                    try:
+                        await fetch_track(
+                            session, track, output_dir, min_bitrate,
+                            on_step=lambda desc: prog.track_step(slot, desc),
+                        )
+                    finally:
+                        prog.track_done(slot)
+
+            await asyncio.gather(*(run_track(t) for t in meta.tracks))
             prog.finish()
     except Exception:
         prog.abort()

@@ -15,6 +15,7 @@ Two modes, matching the two branches of `main.download()`:
 """
 
 import asyncio
+import random
 import sys
 
 import main
@@ -33,7 +34,10 @@ _FAKE_STEPS = [
     ("tagging metadata", 0.3),
 ]
 
-# Track titles for the fake album (varied lengths to exercise the bar's desc).
+# The album path additionally fetches the manifest first (see fetch_track).
+_FAKE_ALBUM_STEPS = [("fetching manifest", 0.3)] + _FAKE_STEPS
+
+# Track titles for the fake album (varied lengths to exercise the slot lines).
 _ALBUM_TRACKS = [
     "Opening Theme",
     "A Considerably Longer Track Title That Runs On",
@@ -42,10 +46,12 @@ _ALBUM_TRACKS = [
     "Another Fairly Long Song Name For Good Measure",
     "Short One",
     "Penultimate",
-    "Closing Credits (Reprise)",
+    "Bridge",
+    "Reprise",
+    "Hidden Track",
+    "Encore",
+    "Closing Credits",
 ]
-# How long each track's fake download takes in album mode.
-_ALBUM_TRACK_DELAY = 0.45
 
 
 class FakeSession:
@@ -134,9 +140,14 @@ async def _fake_process_track(session, track, representation, output_dir,
 
 
 async def _fake_fetch_track(session, track, output_dir, min_bitrate,
-                            build_folder_structure=True):
-    """Simulate one track of an album download (the bar advances per track)."""
-    await asyncio.sleep(_ALBUM_TRACK_DELAY)
+                            build_folder_structure=True, on_step=None):
+    """Simulate one album track, driving its slot's step bar via on_step."""
+    for desc, delay in _FAKE_ALBUM_STEPS:
+        if on_step:
+            on_step(desc)
+        # Jitter each stage so concurrent tracks drift out of lockstep (as real
+        # network/decode timing would), giving the slot bars varied progress.
+        await asyncio.sleep(delay * random.uniform(0.5, 1.6))
 
 
 def main_test():
