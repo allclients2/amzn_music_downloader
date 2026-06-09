@@ -10,6 +10,7 @@ unchanged.
 """
 
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -19,6 +20,8 @@ from pathlib import Path
 
 import requests
 from mutagen.flac import FLAC, Picture
+
+_log = logging.getLogger("downloader.track")
 
 from keys import Keys
 from lyrics import Lyrics
@@ -64,7 +67,7 @@ def download_temp_artwork(url: str, directory: str):
 def download_full_file(base_url: str, output_path):
     r = requests.get(base_url, stream=True)
     if r.status_code != 200:
-        print(f"download failed. Status code: {r.status_code}")
+        _log.error("download failed. Status code: %s", r.status_code)
         return None
     with open(output_path, "wb") as f:
         for chunk in r.iter_content(chunk_size=8192):
@@ -145,14 +148,21 @@ async def process_track(
     output_dir: Path,
     build_folder_structure: bool = True,
     lyrics_resp=None,
+    on_step=None,
 ):
     """Download + decrypt + remux + tag, given an already-selected representation.
 
     `lyrics_resp` may be pre-fetched (single-track fast path); when None it is
-    fetched here in parallel with the download + license.
+    fetched here in parallel with the download + license. `on_step(desc)` is an
+    optional callback invoked at the start of each stage (drives the progress bar).
     """
+    def step(desc):
+        _log.debug(desc)
+        if on_step:
+            on_step(desc)
+
     if representation is None:
-        print(f"no playable representation for {track.title}; skipping.")
+        _log.warning("no playable representation for %s; skipping.", track.title)
         return
 
     rep = representation.mpd_representation
@@ -169,14 +179,14 @@ async def process_track(
     output_file = track_output_dir / (output_filename + ".flac")
 
     if os.path.exists(output_file):
-        print(f"file {output_filename} already exists; skipping.")
+        _log.info("file %s already exists; skipping.", output_filename)
         return
 
     temp_dir = output_dir / ".downloader"
     temp_dir.mkdir(parents=True, exist_ok=True)
     encrypted_file = temp_dir / "encrypted.mp4"
 
-    print("downloading encrypted file + key...")
+    step("downloading track")
     coros = [
         asyncio.to_thread(Keys.getContentKeys, session, track.asin, rep["pssh"]),
         asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
@@ -189,22 +199,23 @@ async def process_track(
     if fetch_lyrics:
         lyrics_resp = results[2]
 
-    print("decrypting via mp4decrypt...")
+    step("decrypting")
     decrypted_mp4 = temp_dir / "decrypted_temp.mp4"
     try:
         subprocess.run(
             ["mp4decrypt", "--key", content_key, str(encrypted_file), str(decrypted_mp4)],
             check=True,
+            capture_output=True,
         )
     except subprocess.CalledProcessError:
-        print("decryption failed?")
+        _log.error("decryption failed for %s", track.title)
         return
 
-    print("remuxing to flac...")
+    step("remuxing to flac")
     flac_temp = temp_dir / "decoded_temp.flac"
     remux_to_flac(decrypted_mp4, flac_temp, rep.get("codec"))
 
-    print("processing metadata...")
+    step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
 
     with download_temp_artwork(track.cover_url, temp_dir) as artwork_path:
@@ -216,7 +227,7 @@ async def process_track(
     if lyrics_obj.has_content() and lyrics_obj.to_lrc():
         lyrics_obj.save_lrc(track_output_dir / (output_filename + ".lrc"))
 
-    print(f"finished, saved to: {output_file}")
+    _log.info("saved to: %s", output_file)
 
 
 async def fetch_track(

@@ -9,3 +9,4 @@ output
 .venv
 .vscode
 *__pycache__*
+*.bin

@@ -8,11 +8,14 @@ TRACK_PSSH (web playback). For the plain Widevine license path we use the
 attribute (entitlement ones carry `value="AmzMusic-2019"`).
 """
 
+import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html import unescape
 
 from mpd_selector import MPDStreamSelector
+
+_log = logging.getLogger("downloader.mpd")
 
 # Widevine DRM system id.
 _WIDEVINE_SCHEME = "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"
@@ -40,7 +43,7 @@ def _fetch_manifest_xml(session, track_asin: str) -> str:
 
 def fetch_representations(session, track_asin: str) -> list:
     """Fetch + parse the DASH manifest into a list of representations (network)."""
-    print("fetching track MPD streams...")
+    _log.debug("fetching track MPD streams for %s", track_asin)
     manifest_xml = _fetch_manifest_xml(session, track_asin)
     return parse_mpd(manifest_xml)
 
@@ -48,7 +51,7 @@ def fetch_representations(session, track_asin: str) -> list:
 def select_representation(track_asin: str, representations: list, min_bitrate):
     """Pick one representation by bitrate (or the interactive picker)."""
     if not representations:
-        print("no available representations.")
+        _log.warning("no available representations for %s", track_asin)
         return None
 
     if min_bitrate == "max":

@@ -7,10 +7,13 @@ challenge/parse/keys flow is unchanged and still uses `device.wvd`.
 """
 
 import base64
+import logging
 
 from pywidevine.cdm import Cdm
 from pywidevine.device import Device
 from pywidevine.pssh import PSSH
+
+_log = logging.getLogger("downloader.keys")
 
 
 class Keys:
@@ -27,7 +30,7 @@ class Keys:
         try:
             challenge = cdm.get_license_challenge(session_id, pssh)
             base64_challenge = base64.b64encode(challenge).decode("utf-8")
-            print("license challenge (truncated):", base64_challenge[:50])
+            _log.debug("license challenge (truncated): %s", base64_challenge[:50])
 
             # Signed license request via the vendored Amazon Music API.
             license_response = session.get_license_response(
@@ -35,15 +38,14 @@ class Keys:
             )
             if not license_response:
                 raise ValueError("Failed to communicate with the license server")
-            print("received license (truncated):", license_response[:50])
+            _log.debug("received license (truncated): %s", license_response[:50])
 
             cdm.parse_license(session_id, license_response)
             keys = cdm.get_keys(session_id)
 
             content_keys = [k for k in keys if k.type == "CONTENT"] or keys
-            print("received keys:")
             for key in content_keys:
-                print(f"\t[{key.type}] {key.kid.hex}:{key.key.hex()}")
+                _log.debug("key [%s] %s:%s", key.type, key.kid.hex, key.key.hex())
 
             first_key = content_keys[0]
             return f"{first_key.kid.hex}:{first_key.key.hex()}"
