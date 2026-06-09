@@ -4,11 +4,13 @@
 config.json
 downloads
 output
+*L*.md
 *.env
 *cookies.txt
 .venv
 .vscode
-*__pycache__*
+__pycache__/
+*.pyc
 *.bin
 credentials.bin
 .DS_Store
