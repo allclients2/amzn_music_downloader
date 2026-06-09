@@ -10,3 +10,5 @@ output
 .vscode
 *__pycache__*
 *.bin
+credentials.bin
+.DS_Store
