@@ -171,22 +171,16 @@ class AmazonMusicMobileAPI:
                 # headless/GUI context with errno 19 "Operation not supported".
                 oauth_flow_callback=oauth_flow_callback,
             )
-            print("got function 2")
 
-        print("ok new")
 
         base_url = f"https://amazon.{selected_region.domain_tld}"
-        print("pre _build_init_cookies")
         init_cookies = cls._build_init_cookies()
 
         session.base_url = base_url
-        print("pre session.cookies.update(init_cookies)")
         session.cookies.update(init_cookies)
 
-        print("pre create_code_verifier")
         code_verifier = create_code_verifier()
         
-        print("pre _build_oauth_url")
         oauth_url, serial = cls._build_oauth_url(
             domain="com",
             code_verifier=code_verifier,
@@ -196,12 +190,9 @@ class AmazonMusicMobileAPI:
         )
 
         # authorization_code = cls._internal_login(session, oauth_url, email, password)
-        print("pre external")
         authorization_code = cls._exteral_login(
             oauth_url, application, oauth_flow_callback=oauth_flow_callback
         )
-
-        print("return")
 
         items = {
             "authorization_code": authorization_code,
@@ -209,21 +200,23 @@ class AmazonMusicMobileAPI:
             "serial": serial,
         }
 
-        print("load_credentials:", load_credentials)
         if not load_credentials:
-            print("return session")
-            traceback.print_stack()
+            # Silenced: this debug stack dump printed untracked rows mid-flow (during
+            # the JP Prime Video pre-login), desyncing the CLI's one-screen-at-a-time
+            # redraw (src/ui.py) and leaving the sign-in header on screen afterward.
             return session
 
-        print("register")
         inst = cls.register(
             application=application,
             selected_region=selected_region,
             **items
         )
-        print(
-            f"Login confirmed for {inst.credentials.customer_info.get('name', 'Unknown user')} in {selected_region.pretty_name} on {application.official_name}"
-        )
+        # Silenced: this debug line printed untracked rows mid-flow, desyncing the
+        # CLI's one-screen-at-a-time redraw (src/ui.py) and leaving the sign-in
+        # header on screen after login. auth.login surfaces its own confirmation.
+        # print(
+        #     f"Login confirmed for {inst.credentials.customer_info.get('name', 'Unknown user')} in {selected_region.pretty_name} on {application.official_name}"
+        # )
 
         # Authorize device for usage on Amazon Music
         auth_device_resp = dict(inst.authorize_device(device_serial=serial).json())
@@ -1376,8 +1369,6 @@ class AmazonMusicMobileAPI:
 
         """
 
-        print("call register")
-
         device_name = f"ripperino {os.urandom(16).hex()} Android Device (MP3)"
         LOGGER.debug(f"Registering device {device_name} with serial {serial}")
 
@@ -1411,9 +1402,7 @@ class AmazonMusicMobileAPI:
             "requested_extensions": ["device_info", "customer_info"],
         }
 
-        print("post!")
         resp = httpx.post(f"https://api.amazon.{selected_region.domain_tld}/auth/register", json=body)
-        print("return")
 
         LOGGER.debug(json.dumps(resp.json(), indent=4))
         resp_json = resp.json()
@@ -1450,8 +1439,6 @@ class AmazonMusicMobileAPI:
             cookie["Name"]: str(cookie["Value"]).replace(r'"', r"")
             for cookie in tokens.get("website_cookies", [{}])
         }
-
-        print("build cred")
 
         credentials = AmazonMusicMobileAPICredentials(
             adp_token=adp_token,
@@ -2025,9 +2012,7 @@ class AmazonMusicMobileAPI:
         application: AmazonMobileApplication,
         oauth_flow_callback: typing.Optional[typing.Callable[[str, str], str]] = None,
     ):
-        print("start external")
         if oauth_flow_callback:
-            print("oauth_flow_callback")
             callback_url = oauth_flow_callback(oauth_url, application.official_name)
         else:
             print(
@@ -2047,7 +2032,6 @@ class AmazonMusicMobileAPI:
                 f"   (Logging into {application.official_name} as required by the module.)\n"
             )
             callback_url = AmazonMusicMobileAPI.read_long_line("\nPaste the URL from your browser after login:\n").strip()
-            print("received")
 
         if not callback_url or not str(callback_url).strip():
             raise ValueError("Amazon Music login cancelled: no callback URL provided.")
@@ -2062,7 +2046,6 @@ class AmazonMusicMobileAPI:
             )
 
         authorization_code = parsed_url["openid.oa2.authorization_code"][0]
-        print("ok parsed:", authorization_code)
         return authorization_code
 
     @classmethod

@@ -39,6 +39,7 @@ DEFAULT_CONFIG = {
         "default_output": "output",
         "default_wvd_path": "device.wvd",
         "default_account": "",
+        "default_concurrency": 5,
     },
     "accounts": {},
 }
@@ -83,7 +84,7 @@ def load_config() -> dict:
 
 def get_settings() -> dict:
     """The `config` sub-table: default_quality / default_output / default_wvd_path /
-    default_account."""
+    default_account / default_concurrency."""
     return load_config()["config"]
 
 
@@ -96,4 +97,11 @@ def save_accounts(accounts: dict) -> None:
     """Replace the `accounts` table, preserving the rest of the config file."""
     data = load_config()
     data["accounts"] = accounts
+    _write_config(data)
+
+
+def save_setting(key: str, value) -> None:
+    """Set one key in the `config` sub-table, preserving the rest of the file."""
+    data = load_config()
+    data["config"][key] = value
     _write_config(data)

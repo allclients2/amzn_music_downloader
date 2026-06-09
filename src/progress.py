@@ -4,28 +4,20 @@ import threading
 import time
 import unicodedata
 
-from _version import VERSION
+import ui
+from ui import paint as _paint
+from ui import FAINT as _FAINT, GREY as _GREY, YELLOW as _YELLOW, GREEN as _GREEN
 
 # ── ANSI styling ────────────────────────────────────────────────────────────
-_BOLD = "\033[1m"
-_FAINT = "\033[2m"
-_GREY = "\033[37m"
-_CYAN = "\033[34m"
-_YELLOW = "\033[33m"
-_GREEN = "\033[32m"
-_RESET = "\033[0m"
-
-
-def _paint(text: str, *codes: str) -> str:
-    """Wrap `text` in the given ANSI codes, resetting afterwards."""
-    return f"{''.join(codes)}{text}{_RESET}"
-
+# The palette, brand, separator, and shared tree markers live in `ui` (one source
+# of truth for the whole CLI's look); progress just composes them.
 
 _FILL = "█"
-_BRAND_TEXT = f"downloader v{VERSION}"
+_BRAND_TEXT = ui.BRAND_TEXT   # raw text, for the header width math below
 
 # Tree-connector markers. header "│", album aggregate "├", per-track slots
-# "├─" (and "╰─" for the last one), single-track bar "╰".
+# "├─" (and "╰─" for the last one), single-track bar "╰". The raw single-char
+# glyphs are kept for width math + the plain (non-TTY) renderer.
 _HEADER_MARK = "│"
 _AGG_MARK = "├"
 _SLOT_MARK = "├─"
@@ -33,13 +25,15 @@ _SLOT_MARK_LAST = "╰─"
 _BAR_MARK = "╰"
 
 # Pre-composed, state-independent line pieces (built once, never reformatted).
-_MARK_HEADER = _paint(_HEADER_MARK, _FAINT, _GREY)
-_MARK_AGG = _paint(_AGG_MARK, _FAINT, _GREY, _BOLD)
+# Header/aggregate/bar markers + brand + separator come from `ui`; the two-char
+# per-track slot connectors are progress-specific.
+_MARK_HEADER = ui.MARK_HEADER
+_MARK_AGG = ui.MARK_TEE
 _MARK_SLOT = _paint(_SLOT_MARK, _FAINT, _GREY)
 _MARK_SLOT_LAST = _paint(_SLOT_MARK_LAST, _FAINT, _GREY)
-_MARK_BAR = _paint(_BAR_MARK, _FAINT, _GREY, _BOLD)
-_SEP = _paint("|", _FAINT, _GREY, _BOLD)   # rendered as f" {_SEP} "
-_BRAND = _paint(_BRAND_TEXT, _CYAN)
+_MARK_BAR = ui.MARK_CLOSE
+_SEP = ui.SEP   # rendered as f" {_SEP} "
+_BRAND = ui.BRAND
 _DONE = _paint("done", _GREEN)
 
 # Output occupies this fraction of the terminal width (leaves breathing room on
@@ -382,6 +376,10 @@ class Progress:
             if self._rendered:
                 # Rewind to the top of the previous block and clear downwards.
                 sys.stdout.write(f"\033[{self._rendered_lines}F\033[J")
+            else:
+                # First paint: clear the last setup screen (account selector /
+                # login notes) so the bar takes over the same single screen.
+                ui.consume_pending_screen()
             sys.stdout.write("\n".join(lines) + "\n")
             sys.stdout.flush()
             self._rendered_lines = len(lines)

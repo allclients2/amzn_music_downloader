@@ -6,20 +6,18 @@ from pathlib import Path
 
 import auth
 import config
+import ui
 from fetch_track import fetch_track, process_track, purge_temp_dir
 from metadata import fetch_metadata
 from mpd_info import fetch_representations, select_representation
 from _version import VERSION
 from progress import Progress
 
-# How many album tracks to download concurrently.
-DOWNLOAD_CONCURRENCY = 5
-
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Download a track or album from Amazon Music",
-        epilog="Add an account: `python src/main.py login [COUNTRY_CODE]`",
+        description="Amazon Music archival program",
+        epilog="Manage accounts: `python src/main.py accounts`",
     )
 
     parser.add_argument(
@@ -69,57 +67,137 @@ async def run_download(args):
     quality = args.default_quality or settings["default_quality"]
     wvd_path = args.wvd_path or settings["default_wvd_path"]
     output_dir = Path(args.output or settings["default_output"])
+    concurrency = settings["default_concurrency"]
+
+    # Fail fast with a friendly screen when the Widevine device file is missing:
+    # decryption can't proceed without it, so don't prompt for an account or start
+    # the download bar first.
+    if not Path(wvd_path).exists():
+        ui.print_error("Widevine device not found")
+        sys.exit(1)
 
     # Builds a signed session from stored credentials; signs in interactively
     # (browser OAuth) on first use and persists the login. `--account` picks among
     # several stored accounts (id / name / country); omitted uses the default/sole one.
     session = auth.get_session(account=args.account)
 
-    await download(session, args.content_asin, output_dir, quality, wvd_path, plain=args.verbose)
+    await download(session, args.content_asin, output_dir, quality, wvd_path,
+                   plain=args.verbose, concurrency=concurrency)
 
 
-def run_login(argv):
-    """`python src/main.py login [COUNTRY_CODE]` — interactive sign-in that adds a
-    new account to the store (config.json `accounts` + credentials.bin)."""
-    parser = argparse.ArgumentParser(
-        prog="main.py login",
-        description="Sign in to Amazon Music and add the account to the store.",
-    )
-    parser.add_argument(
-        "country",
-        nargs="?",
-        default=None,
-        help="2-letter region code to sign in to (e.g. US, GB, JP). Prompted if omitted.",
-    )
-    args = parser.parse_args(argv)
+def _account_options():
+    """The stored accounts as `(name, region)` pairs, parallel to their ids."""
+    accounts = config.load_accounts()
+    ids = list(accounts.keys())
+    options = [
+        (info.get("name") or "Unknown", info.get("region") or info.get("country") or "?")
+        for info in accounts.values()
+    ]
+    return ids, options
 
-    country = args.country or input(
-        "Enter the 2-letter region code to sign in (e.g. US, GB, DE, JP): "
-    ).strip()
+
+def _add_account(country=None):
+    """Interactive browser sign-in that adds a new account to the store
+    (config.json `accounts` + credentials.bin), then shows the updated list."""
+    country = country or ui.prompt_region()
     try:
         auth.login(country)
     except (ValueError, TypeError) as exc:
         # Bad/unknown country code — fail cleanly before the browser step.
-        print(f"Login failed: {exc}")
+        ui.print_error(f"Add account failed: {exc}")
         sys.exit(1)
+    _, options = _account_options()
+    ui.print_account_summary("Account added", options)
 
-    accounts = config.load_accounts()
-    print(f"\nStored accounts ({len(accounts)}):")
-    for account_id, info in accounts.items():
+
+def run_accounts(argv):
+    """`python src/main.py accounts` — interactive account manager. Lists stored
+    accounts; selecting one prompts (in red) to remove it, `A` adds a new account,
+    `Q` quits."""
+    while True:
+        ids, options = _account_options()
+        if not ids:
+            ui.note("No accounts stored yet.")
+            _add_account()
+            continue
+
+        choice = ui.prompt_manage_account(options)
+        if choice == "quit":
+            return
+        if choice == "add":
+            _add_account()
+            continue
+
+        account_id = ids[choice]
+        name, region = options[choice]
+        if ui.confirm_delete(name, region):
+            auth.delete_account(account_id)
+            ui.note(f"Removed account '{name}' ({region}).")
+        # Loop back to the refreshed menu.
+
+
+def run_account(argv):
+    """`python src/main.py account --add [COUNTRY]` / `--delete ACCOUNT_ID` —
+    add or remove an account directly without the interactive menu."""
+    parser = argparse.ArgumentParser(
+        prog="main.py account",
+        description="Add or remove an Amazon Music account.",
+    )
+    parser.add_argument(
+        "--add",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="COUNTRY",
+        help="Sign in and add an account (optionally for a given 2-letter region).",
+    )
+    parser.add_argument(
+        "--delete",
+        default=None,
+        metavar="ACCOUNT_ID",
+        help="Remove a stored account by customer id, name, or country code.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.delete is not None:
+        try:
+            info = auth.delete_account(args.delete)
+        except KeyError:
+            ui.print_error(f"No stored account matching '{args.delete}'.")
+            sys.exit(1)
         name = info.get("name") or "Unknown"
         region = info.get("region") or info.get("country") or "?"
-        print(f"  - {name} — {region} [{account_id}]")
+        ui.note(f"Removed account '{name}' ({region}).")
+    elif args.add is not None:
+        _add_account(args.add or None)
+    else:
+        parser.error("specify --add or --delete")
 
 
 def main():
     argv = sys.argv[1:]
-    if argv and argv[0] == "login":
-        run_login(argv[1:])
-        return
-    asyncio.run(run_download(parse_args(argv)))
+    verbose = "-v" in argv or "--verbose" in argv
+    try:
+        if argv and argv[0] == "accounts":
+            run_accounts(argv[1:])
+        elif argv and argv[0] == "account":
+            run_account(argv[1:])
+        else:
+            asyncio.run(run_download(parse_args(argv)))
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except Exception as exc:
+        # Render unexpected failures as the Error screen instead of a raw
+        # traceback. SystemExit (argparse, the handled exits above) passes through;
+        # verbose mode re-raises so the traceback is available for debugging.
+        if verbose:
+            raise
+        ui.print_error(str(exc) or type(exc).__name__)
+        sys.exit(1)
 
 
-async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False):
+async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False,
+                   concurrency=5):
     prog = Progress(asin=asin, plain=plain)
     prog.set_desc("fetching metadata, manifest & lyrics")
 
@@ -153,12 +231,12 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             )
             prog.finish()
         else:
-            # Album: download up to DOWNLOAD_CONCURRENCY tracks at once. The
-            # aggregate line counts completed tracks; each in-flight track gets
-            # its own step-progress slot line.
+            # Album: download up to `concurrency` tracks at once. The aggregate
+            # line counts completed tracks; each in-flight track gets its own
+            # step-progress slot line.
             prog.set_name(meta.album_name)
             prog.begin_album(len(meta.tracks))
-            sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+            sem = asyncio.Semaphore(concurrency)
 
             async def run_track(track):
                 async with sem:

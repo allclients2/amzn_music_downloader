@@ -13,12 +13,11 @@ Access tokens are refreshed automatically when they expire.
 """
 
 import os
-import sys
-import termios
 import pickle
 from pathlib import Path
 
 import config
+import ui
 from vendor.amazonmusic.azapi import AmazonMusicMobileAPI
 from vendor.amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
@@ -69,7 +68,7 @@ def _load_store() -> dict:
         with open(path, "rb") as fh:
             data = pickle.load(fh)
     except Exception as exc:  # corrupt/unreadable store -> treat as logged out
-        print(f"warning: could not read {path} ({exc}); ignoring.")
+        ui.note(f"warning: could not read {path} ({exc}); ignoring.")
         return {}
     if not isinstance(data, dict):
         return {}
@@ -111,46 +110,15 @@ def _save_account(credentials: AmazonMusicMobileAPICredentials) -> str:
     _sync_accounts(store)
     return account_id
 
-def read_long_line(prompt=""):
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        new = termios.tcgetattr(fd)
-        new[3] &= ~termios.ICANON  # lflags: disable canonical (line-buffered) mode
-        termios.tcsetattr(fd, termios.TCSANOW, new)
-        chars = []
-        while True:
-            c = sys.stdin.read(1)
-            if c in ("\n", "\r"):
-                break
-            chars.append(c)
-        return "".join(chars)
-    finally:
-        termios.tcsetattr(fd, termios.TCSANOW, old)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-
-def _cli_oauth_callback(oauth_url: str, application_name: str) -> str:
+def _cli_oauth_callback(oauth_url: str, application_name: str, country: str) -> str:
     """Drive the interactive browser OAuth from a terminal.
 
     Amazon hands out a sign-in URL; the user signs in, lands on a blank/"not
     found" page, and pastes that final URL back here so the auth code can be
-    extracted. For JP this is invoked twice (Prime Video first, then Music).
+    extracted. For JP this is invoked twice (Prime Video first, then Music); each
+    call renders its own self-contained screen via `ui.prompt_oauth_url`.
     """
-    print()
-    print("=" * 70)
-    print(f"Sign in to: {application_name}")
-    print("1. Open this URL in your browser and sign in:")
-    print()
-    print(f"   {oauth_url}")
-    print()
-    print("2. After signing in you'll land on a blank / 'page not found' page.")
-    print("3. Copy that page's FULL URL from the address bar and paste it below.")
-    print("=" * 70)
-    callback_url = read_long_line("Paste the post-login URL here: ").strip()
-    return callback_url
+    return ui.prompt_oauth_url(f"{application_name} ({country})", oauth_url)
 
 
 def login(country: str) -> AmazonMusicMobileAPI:
@@ -161,22 +129,64 @@ def login(country: str) -> AmazonMusicMobileAPI:
     # Validate the region up front so a typo fails before the browser step.
     AmazonRegion.get_region_by_country(country)
 
-    print(f"Signing in to Amazon Music for region: {country}")
+    ui.note(f"Signing in to Amazon Music for region: {country}")
     inst = AmazonMusicMobileAPI.login_via_mobile(
         email="",
         password="",
         country_code=country,
-        oauth_flow_callback=_cli_oauth_callback,
+        # Closure so the callback can title each screen with the region (e.g. JP).
+        oauth_flow_callback=lambda url, app: _cli_oauth_callback(url, app, country),
     )
 
     account_id = _save_account(inst.credentials)
     info = _account_info(inst.credentials)
-    print(f"Saved account '{info['name']}' ({info['region']}) [{account_id}].")
+    ui.note(f"Saved account '{info['name']}' ({info['region']}) [{account_id}].")
     return inst
 
 
 def _prompt_country() -> str:
-    return input("Enter your 2-letter region code (e.g. US, GB, DE, JP): ").strip().upper()
+    return ui.prompt_region().upper()
+
+
+def _resolve_account_id(store: dict, account: str | None) -> str | None:
+    """Resolve a user-supplied account reference (customer_id, account name, or
+    country code) to a stored account id, or None when nothing matches."""
+    key = (account or "").strip()
+    if not key:
+        return None
+    if key in store:  # exact customer_id
+        return key
+    accounts = config.load_accounts()
+    for account_id, creds in store.items():
+        info = accounts.get(account_id) or _account_info(creds)
+        if ((info.get("name") or "").lower() == key.lower()
+                or (info.get("country") or "").upper() == key.upper()):
+            return account_id
+    return None
+
+
+def delete_account(account: str) -> dict:
+    """Remove a stored account (credentials + the config.json mirror) by id, name,
+    or country code. Returns the removed account's info; raises KeyError when no
+    stored account matches."""
+    store = _load_store()
+    account_id = _resolve_account_id(store, account)
+    if account_id is None:
+        raise KeyError(account)
+
+    info = config.load_accounts().get(account_id) or _account_info(store[account_id])
+    del store[account_id]
+    _save_store(store)
+
+    accounts = config.load_accounts()
+    if account_id in accounts:
+        del accounts[account_id]
+        config.save_accounts(accounts)
+
+    # Drop the default if it pointed at the account we just removed.
+    if (config.get_settings().get("default_account") or "") == account_id:
+        config.save_setting("default_account", "")
+    return info
 
 
 def _account_label(account_id: str, store: dict, accounts: dict | None = None) -> str:
@@ -209,7 +219,7 @@ def _select_credentials(store: dict, account: str | None, country: str | None):
         labels = ", ".join(_account_label(a, store) for a in store)
         raise RuntimeError(
             f"No stored account matching '{account}'. Stored accounts: {labels}. "
-            f"Add one with `python src/main.py login`."
+            f"Add one with `python src/main.py account --add`."
         )
 
     if country:
@@ -234,15 +244,14 @@ def _prompt_account(store: dict) -> str | None:
     account id, or None to sign in to a brand-new account."""
     accounts = config.load_accounts()
     ids = list(store.keys())
-    print("Multiple Amazon Music accounts are stored:")
-    for i, account_id in enumerate(ids, 1):
-        print(f"  {i}. {_account_label(account_id, store, accounts)}")
-    add_choice = len(ids) + 1
-    print(f"  {add_choice}. Add a new account")
-    raw = input(f"Select an account [1-{add_choice}]: ").strip()
-    if raw.isdigit() and 1 <= int(raw) <= len(ids):
-        return ids[int(raw) - 1]
-    return None
+    options = []
+    for account_id in ids:
+        info = accounts.get(account_id) or _account_info(store[account_id])
+        name = info.get("name") or "Unknown"
+        region = info.get("region") or info.get("country") or "?"
+        options.append((name, region))
+    index = ui.prompt_account(options)
+    return None if index is None else ids[index]
 
 
 def get_session(
@@ -272,7 +281,7 @@ def get_session(
                     f"Set `default_account` in config/config.json (one of: {labels})."
                 )
             raise RuntimeError(
-                "No saved Amazon Music login. Run `python src/main.py login` "
+                "No saved Amazon Music login. Run `python src/main.py account --add` "
                 "once to sign in before using the bot."
             )
         # Interactive: choose among existing accounts, or sign in to a new one.
@@ -285,12 +294,12 @@ def get_session(
         else:
             # Nothing stored, or a specific region requested but not stored yet.
             if not store:
-                print("No saved Amazon Music login found.")
+                ui.note("No saved Amazon Music login found.")
             return login(country or _prompt_country())
 
     session = AmazonMusicMobileAPI(credentials=credentials)
     if session.credentials.access_token_expired:
-        print("Access token expired; refreshing...")
+        ui.note("Access token expired; refreshing...")
         session.refresh_access_token(force=True)
         _save_account(session.credentials)
     return session
