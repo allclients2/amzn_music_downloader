@@ -1,50 +1,69 @@
+"""Lyrics parsing for the music-xray-service response.
+
+`AmazonMusicMobileAPI.get_track_lyrics()` returns a `lyricsResponseList[0]` dict
+shaped like::
+
+    {
+      "lyrics": {
+        "lines": [{"startTime": <ms>, "endTime": <ms>, "text": "..."}, ...],
+        "writers": [...],
+      },
+      "lyricsResponseCode": "1002",  # 1002 = found, 2001 = not found
+    }
+
+Some regions/tracks return an unsynced-only payload (no `lines`); we fall back
+to any plain-text field. Replaces the old `fe.web` `SetLyricsMethod` parser.
+"""
+
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import List, Optional
 
 
 @dataclass
 class LyricsLine:
-    timestamp_ms: int
+    timestamp_ms: Optional[int]  # None for unsynced lines
     text: str
+
 
 @dataclass
 class Lyrics:
     lines: List[LyricsLine]
 
     @staticmethod
-    def from_json(lyrics_json: dict) -> "Lyrics":
-        methods = lyrics_json.get("methods", [])
-        lyrics_block = None
+    def from_xray(resp: dict) -> "Lyrics":
+        payload = resp.get("lyrics", {}) if isinstance(resp, dict) else {}
+        raw_lines = payload.get("lines", [])
+        if isinstance(raw_lines, dict):
+            raw_lines = list(raw_lines.values())
 
-        for method in methods:
-            if method.get("interface", "").endswith("SetLyricsMethod"):
-                lyrics_block = method.get("lyrics")
-                break
+        parsed: List[LyricsLine] = []
+        for line in raw_lines if isinstance(raw_lines, list) else []:
+            if not isinstance(line, dict):
+                continue
+            text = str(line.get("text") or "").strip()
+            if not text:
+                continue
+            start = line.get("startTime")
+            try:
+                ts = int(start) if start is not None else None
+            except (TypeError, ValueError):
+                ts = None
+            parsed.append(LyricsLine(timestamp_ms=ts, text=text))
 
-        if not lyrics_block:
-            raise ValueError("No lyrics found in JSON.")
+        if not parsed:
+            # Unsynced-only fallback.
+            plain = (
+                payload.get("text")
+                or payload.get("plainText")
+                or payload.get("displayText")
+                or (resp.get("lyricsText") if isinstance(resp, dict) else None)
+            )
+            if plain:
+                for line in str(plain).strip().splitlines():
+                    if line.strip():
+                        parsed.append(LyricsLine(timestamp_ms=None, text=line.strip()))
 
-        raw_lines: Dict[str, str] = lyrics_block["lines"]
-        timing: Dict[str, int] = lyrics_block["timing"]
-
-        parsed_lines: List[LyricsLine] = []
-        last_index = None
-
-        for ms_str in sorted(timing.keys(), key=lambda x: int(x)):
-            index = timing[ms_str]
-
-            if index != last_index:
-                text = raw_lines.get(str(index), "").strip()
-                if text:
-                    parsed_lines.append(
-                        LyricsLine(
-                            timestamp_ms=int(ms_str),
-                            text=text
-                        )
-                    )
-                last_index = index
-
-        return Lyrics(lines=parsed_lines)
+        return Lyrics(lines=parsed)
 
     @staticmethod
     def _ms_to_lrc_timestamp(ms: int) -> str:
@@ -54,25 +73,30 @@ class Lyrics:
         hundredths = (ms % 1000) // 10
         return f"{minutes:02}:{seconds:02}.{hundredths:02}"
 
-    def to_lrc(self) -> str:
-        output = []
-        for line in self.lines:
-            timestamp = self._ms_to_lrc_timestamp(line.timestamp_ms)
-            output.append(f"[{timestamp}]{line.text}")
-        return "\n".join(output)
+    def _has_synced(self) -> bool:
+        return any(l.timestamp_ms is not None for l in self.lines)
 
-    def save_lrc(self, path: str) -> str:
+    def to_lrc(self) -> str:
+        """Synced .lrc body (only emitted when timestamps are present)."""
+        if not self._has_synced():
+            return ""
+        out = []
+        for line in self.lines:
+            if line.timestamp_ms is None:
+                continue
+            out.append(f"[{self._ms_to_lrc_timestamp(line.timestamp_ms)}]{line.text}")
+        return "\n".join(out)
+
+    def save_lrc(self, path) -> str:
         content = self.to_lrc()
         if not content:
-            return path
-
+            return str(path)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
+        return str(path)
 
-        return path
-
-    # unsynced lyrics suitable for MP4 tag '\xa9lyr'; omits timestamps.
     def to_mp4_lyrics(self) -> str:
+        """Unsynced plain-text lyrics for the embedded LYRICS tag."""
         return "\n".join(line.text for line in self.lines)
 
     def has_content(self) -> bool:

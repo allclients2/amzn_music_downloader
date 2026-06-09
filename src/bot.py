@@ -57,15 +57,15 @@ def upload_file(filepath: Path) -> str:
 
 
 def get_downloaded_files(directory: Path) -> list[Path]:
-    return list(directory.rglob("*.mp4")) + list(directory.rglob("*.lrc"))
+    return list(directory.rglob("*.flac")) + list(directory.rglob("*.lrc"))
 
 
-def sort_mp4s(mp4_files: list) -> list:
-    """Sort by disc then track number, parsed from '{DISC} - {TRACK_NUM} {NAME}.mp4'."""
+def sort_mp4s(audio_files: list) -> list:
+    """Sort by disc then track number, parsed from '{DISC} - {TRACK_NUM} {NAME}.flac'."""
     def sort_key(p):
         m = re.match(r"^(\d+)\s*-\s*(\d+)", p.stem)
         return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-    return sorted(mp4_files, key=sort_key)
+    return sorted(audio_files, key=sort_key)
 
 
 def clear_directory(directory: Path):
@@ -293,14 +293,14 @@ async def download(interaction: discord.Interaction, asin: str):
         # ── Album result ──────────────────────────────────────────────────────
         elif data["type"] == "album":
             files = get_downloaded_files(output_dir)
-            mp4_files = sort_mp4s([f for f in files if f.suffix == ".mp4"])
+            audio_files = sort_mp4s([f for f in files if f.suffix == ".flac"])
             lrc_files = {f.stem: f for f in files if f.suffix == ".lrc"}
 
-            if not mp4_files:
+            if not audio_files:
                 raise FileNotFoundError("No output files were produced.")
 
             lines = []
-            for i, fp in enumerate(mp4_files, start=1):
+            for i, fp in enumerate(audio_files, start=1):
                 url = await asyncio.to_thread(upload_file, fp)
                 line = f"`{i:02d}.` [{fp.stem}]({url})"
                 lrc = lrc_files.get(fp.stem)

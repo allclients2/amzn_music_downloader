@@ -1,19 +1,38 @@
-import subprocess
+"""Download, decrypt, remux to FLAC, and tag a single track.
+
+Pipeline: signed manifest -> download encrypted file from BaseURL -> Widevine
+content key (signed license) -> mp4decrypt -> ffmpeg remux to .flac (lossless
+copy of the FLAC stream) -> mutagen FLAC tags + embedded cover -> sidecar .lrc.
+
+Output is now `.flac` (was `.mp4`) so the full metadata the muse API provides is
+preserved. The folder layout (`<album_artist>/<album>/`) and filename builder are
+unchanged.
+"""
+
 import asyncio
 import os
-import tempfile
-import requests
-import time
-from contextlib import contextmanager
-from keys import Keys
-from pathlib import Path
-from metadata2 import Metadata2, AlbumMetadataV2, TrackMetadataV2
-from metadata import TrackMetadata, AlbumMetadata
-from lyrics import Lyrics
-from util import safe_filename, build_output_filename
-from mutagen.mp4 import MP4, MP4Cover
-from mpd_info import TrackRepresentation
 import shutil
+import subprocess
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+
+import requests
+from mutagen.flac import FLAC, Picture
+
+from keys import Keys
+from lyrics import Lyrics
+from metadata import TrackMetadata
+from mpd_info import find_representation
+from util import safe_filename, build_output_filename
+
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+)
+# FLAC Picture type 3 = front cover.
+_FRONT_COVER = 3
+
 
 @contextmanager
 def download_temp_artwork(url: str, directory: str):
@@ -22,19 +41,14 @@ def download_temp_artwork(url: str, directory: str):
         return
 
     tmp_path = None
-
-    with tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=".jpg",
-        dir=directory
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg", dir=directory) as tmp:
         response = requests.get(
             url,
-            timeout = 10,
+            timeout=10,
             headers={
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-            }
+                "User-Agent": _UA,
+            },
         )
         response.raise_for_status()
         tmp.write(response.content)
@@ -46,197 +60,172 @@ def download_temp_artwork(url: str, directory: str):
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-def download_full_file(rep, output_path=None):
-    if output_path is None:
-        output_path = f"{rep['id']}_full.bin"
 
-    r = requests.get(rep["base_url"], stream=True)
-
+def download_full_file(base_url: str, output_path):
+    r = requests.get(base_url, stream=True)
     if r.status_code != 200:
         print(f"download failed. Status code: {r.status_code}")
         return None
-
     with open(output_path, "wb") as f:
         for chunk in r.iter_content(chunk_size=8192):
             if chunk:
                 f.write(chunk)
-
     return output_path
 
-async def download_task(rep: list, encrypted_file: Path):
-    print("downloading encrypted file...")
-    return await asyncio.to_thread(
-        download_full_file,
-        rep,
-        encrypted_file
-    )
 
-async def keys_task(rep, config, cookie_header):
-    print("fetching content keys...")
-    return await asyncio.to_thread(
-        Keys.getContentKeys,
-        rep["pssh"],
-        config,
-        cookie_header
-    )
+def remux_to_flac(src_mp4: Path, dst_flac: Path, codec: str) -> None:
+    """Remux the decrypted (fragmented) MP4 to a .flac container.
 
-async def lyrics_task(track_metadatav2, config):
-    print("fetching lyrics (if present)...")
-    return await asyncio.to_thread(
-        Metadata2.fetch_lyrics,
-        track_metadatav2.asin,
-        track_metadatav2.duration_seconds,
-        config
-    )
-
-def embed_metadata_and_cover(
-    mp4_path: str,
-    track_metadatav1: TrackMetadata,
-    track_metadatav2: TrackMetadataV2,
-    album_metadatav1: AlbumMetadata,
-    album_metadatav2: AlbumMetadataV2,
-    artwork_path: str | None
-):
-    audio = MP4(mp4_path)
-    
-    # disc info
-    disc_number = track_metadatav1.disc if hasattr(track_metadatav1, "disc") else 1
-
-    # tracks on this disc only
-    tracks_on_disc = [
-        t for t in album_metadatav1.tracks
-        if getattr(t, "disc", 1) == disc_number
+    Amazon HD/UHD audio is FLAC, so we copy the stream losslessly. For any other
+    codec we re-encode to FLAC so a .flac file is still produced.
+    """
+    lossless = (codec or "").lower().startswith("flac")
+    cmd = [
+        "ffmpeg", "-nostdin", "-y",
+        "-i", str(src_mp4),
+        "-map", "0:a",
+        "-c:a", "copy" if lossless else "flac",
+        str(dst_flac),
     ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 and lossless:
+        # Fall back to a re-encode if the stream couldn't be copied.
+        cmd[cmd.index("copy")] = "flac"
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg remux failed:\n{result.stderr}")
 
-    total_tracks_on_disc = len(tracks_on_disc)
-    total_discs = max(
-        (getattr(t, "disc", 1) for t in album_metadatav1.tracks),
-        default=1
-    )
 
-    # track metadata
-    audio["\xa9nam"] = track_metadatav2.title
-    audio["\xa9ART"] = track_metadatav2.artist
-    audio["trkn"] = [(track_metadatav1.track_number, total_tracks_on_disc)]
-    audio["disk"] = [(track_metadatav1.disc, total_discs)]
-    audio["\xa9day"] = album_metadatav2.release_date_iso or ""
-    audio["\xa9cmt"] = "explicit" if track_metadatav2.is_explicit else ""
+def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwork_path):
+    audio = FLAC(flac_path)
+    audio.delete()  # clear any tags carried over from the source container
 
-    # album metadata
-    audio["\xa9alb"] = album_metadatav2.name
-    audio["aART"] = album_metadatav2.artist
-    audio["\xa9cpy"] = album_metadatav2.copyright or ""
+    def setv(key, value):
+        if value is not None and value != "":
+            audio[key] = str(value)
 
-    # lyrics
-    if track_metadatav2.lyrics and track_metadatav2.lyrics.has_content():
-        audio["\xa9lyr"] = track_metadatav2.lyrics.to_mp4_lyrics()
+    setv("TITLE", track.title)
+    setv("ARTIST", track.artist)
+    setv("ALBUM", track.album_name)
+    setv("ALBUMARTIST", track.album_artist)
+    setv("TRACKNUMBER", track.track_number)
+    setv("TRACKTOTAL", track.total_tracks)
+    setv("DISCNUMBER", track.disc)
+    setv("DISCTOTAL", track.total_discs)
+    setv("DATE", track.release_date)
+    setv("COPYRIGHT", track.copyright)
+    setv("LABEL", track.label)
+    setv("GENRE", track.genre)
+    setv("ISRC", track.isrc)
+    setv("COMPOSER", track.composers)
+    setv("EXPLICIT", "1" if track.is_explicit else "0")
+    if track.popularity is not None:
+        setv("POPULARITY", track.popularity)
 
-    # popularity
-    if track_metadatav2.popularity is not None:
-        audio["----:com.apple.iTunes:POPULARITY"] = [
-            str(track_metadatav2.popularity).encode("utf-8")
-        ]
+    if lyrics and lyrics.has_content():
+        setv("LYRICS", lyrics.to_mp4_lyrics())
 
-    # artwork
     if artwork_path:
         with open(artwork_path, "rb") as img:
-            cover = img.read()
-
-        audio["covr"] = [
-            MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)
-        ]
+            cover_data = img.read()
+        pic = Picture()
+        pic.type = _FRONT_COVER
+        pic.mime = "image/jpeg"
+        pic.desc = "Cover"
+        pic.data = cover_data
+        audio.add_picture(pic)
 
     audio.save()
 
-async def fetch_track(
-    track_representation: TrackRepresentation,
-    track_metadatav1: TrackMetadata,
-    track_metadatav2: TrackMetadataV2,
-    album_metadatav1: AlbumMetadata,
-    album_metadatav2: AlbumMetadataV2,
-    output_dir: Path,
-    config,
-    cookie_header: str,
-    build_folder_structure: bool = True
-):
-    mpd_rep = track_representation.mpd_representation
-    track_asin = track_representation.track_asin
 
-    track_number = track_metadatav1.track_number
-    track_name = track_metadatav1.track_name
-    disc_number = track_metadatav1.disc
+async def process_track(
+    session,
+    track: TrackMetadata,
+    representation,
+    output_dir: Path,
+    build_folder_structure: bool = True,
+    lyrics_resp=None,
+):
+    """Download + decrypt + remux + tag, given an already-selected representation.
+
+    `lyrics_resp` may be pre-fetched (single-track fast path); when None it is
+    fetched here in parallel with the download + license.
+    """
+    if representation is None:
+        print(f"no playable representation for {track.title}; skipping.")
+        return
+
+    rep = representation.mpd_representation
 
     if build_folder_structure:
-        safe_album_artist_name = safe_filename(album_metadatav1.artist_name, False)
-        safe_album_name = safe_filename(track_metadatav1.album_name, False)
-
+        safe_album_artist_name = safe_filename(track.album_artist, False)
+        safe_album_name = safe_filename(track.album_name, False)
         track_output_dir = output_dir / safe_album_artist_name / safe_album_name
     else:
         track_output_dir = output_dir
 
-    output_filename = build_output_filename(disc_number, track_number, track_name)
+    output_filename = build_output_filename(track.disc, track.track_number, track.title)
     track_output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = track_output_dir / (output_filename + ".mp4")
+    output_file = track_output_dir / (output_filename + ".flac")
 
     if os.path.exists(output_file):
-        print(f"file {output_filename} already exists in output directory; skipping.")
+        print(f"file {output_filename} already exists; skipping.")
         return
-    
-    # create a temporary directory we can work with
-    temp_dir = (output_dir / ".downloader")
+
+    temp_dir = output_dir / ".downloader"
     temp_dir.mkdir(parents=True, exist_ok=True)
+    encrypted_file = temp_dir / "encrypted.mp4"
 
-    print("downloading encrypted file...")
-    encrypted_file = Path(temp_dir / "encrypted.mp4")
-    
-    download_coro = download_task(mpd_rep, encrypted_file)
-    keys_coro = keys_task(mpd_rep, config, cookie_header)
-    lyrics_coro = lyrics_task(track_metadatav2, config)
-
-    content_key, _, json_lyrics = await asyncio.gather(
-        keys_coro,
-        download_coro,
-        lyrics_coro
-    )
+    print("downloading encrypted file + key...")
+    coros = [
+        asyncio.to_thread(Keys.getContentKeys, session, track.asin, rep["pssh"]),
+        asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
+    ]
+    fetch_lyrics = lyrics_resp is None
+    if fetch_lyrics:
+        coros.append(asyncio.to_thread(session.get_track_lyrics, track.asin))
+    results = await asyncio.gather(*coros)
+    content_key = results[0]
+    if fetch_lyrics:
+        lyrics_resp = results[2]
 
     print("decrypting via mp4decrypt...")
-    temp_output = Path(temp_dir / "decrypted_temp.mp4")
-
-    cmd = [
-        "mp4decrypt",
-        "--key", content_key,
-        str(encrypted_file),
-        str(temp_output)
-    ]
-
+    decrypted_mp4 = temp_dir / "decrypted_temp.mp4"
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(
+            ["mp4decrypt", "--key", content_key, str(encrypted_file), str(decrypted_mp4)],
+            check=True,
+        )
     except subprocess.CalledProcessError:
         print("decryption failed?")
         return
 
+    print("remuxing to flac...")
+    flac_temp = temp_dir / "decoded_temp.flac"
+    remux_to_flac(decrypted_mp4, flac_temp, rep.get("codec"))
+
     print("processing metadata...")
-    lyrics_obj = Lyrics.from_json(json_lyrics)
-    track_metadatav2.attach_lyrics(lyrics_obj)
+    lyrics_obj = Lyrics.from_xray(lyrics_resp)
 
-    artwork_url = Metadata2.fetch_artwork_v2(track_asin, config)
+    with download_temp_artwork(track.cover_url, temp_dir) as artwork_path:
+        embed_metadata_and_cover(str(flac_temp), track, lyrics_obj, artwork_path)
 
-    print("artwork_url:", artwork_url)
+    flac_temp.rename(output_file)
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
-    with download_temp_artwork(artwork_url, temp_dir) as artwork_path:
-        embed_metadata_and_cover(
-            mp4_path=temp_output,
-            track_metadatav1=track_metadatav1,
-            track_metadatav2=track_metadatav2,
-            album_metadatav1=album_metadatav1,
-            album_metadatav2=album_metadatav2,
-            artwork_path=artwork_path
-        )
-
-    temp_output.rename(output_file)
-    shutil.rmtree(temp_dir)
-
-    if track_metadatav2.lyrics and track_metadatav2.lyrics.has_content():
-        track_metadatav2.lyrics.save_lrc(track_output_dir / (output_filename + ".lrc"))
+    if lyrics_obj.has_content() and lyrics_obj.to_lrc():
+        lyrics_obj.save_lrc(track_output_dir / (output_filename + ".lrc"))
 
     print(f"finished, saved to: {output_file}")
+
+
+async def fetch_track(
+    session,
+    track: TrackMetadata,
+    output_dir: Path,
+    min_bitrate,
+    build_folder_structure: bool = True,
+):
+    """Album/general path: fetch the manifest, select a stream, then process."""
+    representation = find_representation(session, track.asin, min_bitrate)
+    await process_track(session, track, representation, output_dir, build_folder_structure)

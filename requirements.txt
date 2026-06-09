@@ -1,7 +1,16 @@
 requests
-playwright
 discord.py
 python-dotenv
 mutagen
-beautifulsoup4
-browser-cookie3
+pywidevine==1.8.0
+
+# Vendored Amazon Music API (src/vendor/amazonmusic, from OrpheusDL).
+# beautifulsoup4 is required by the vendored OAuth sign-in (not for metadata).
+audible==0.8.2
+httpx==0.23.3
+rsa==4.9
+xmltodict==0.13.0
+pycryptodome==3.19.0
+beautifulsoup4==4.12.2
+brotli
+python-dateutil

@@ -8,3 +8,4 @@ output
 *cookies.txt
 .venv
 .vscode
+*__pycache__*
