@@ -5,8 +5,10 @@ config.json
 downloads
 output
 *L*.md
+*O.md
 *.env
 *cookies.txt
+.c*e
 .venv
 .vscode
 __pycache__/

@@ -1,3 +1,4 @@
+import contextlib
 import shutil
 import sys
 import threading
@@ -154,6 +155,9 @@ class Progress:
         self._tty = sys.stdout.isatty() and not plain
         self._rendered = False
         self._rendered_lines = 0
+        # When suspended (e.g. an interactive curses picker owns the terminal),
+        # render() — including the ticker thread's redraws — becomes a no-op.
+        self._paused = False
         # The ticker thread and event-driven updates can both redraw; serialize
         # their stdout writes and slot reads/writes.
         self._lock = threading.Lock()
@@ -242,6 +246,32 @@ class Progress:
         """The traceback prints cleanly: the last render already left the cursor
         on the line below the block."""
         self._shutdown_ticker()
+
+    @contextlib.contextmanager
+    def paused(self):
+        """Suspend the bar while an interactive UI (e.g. the curses stream
+        picker) takes over the terminal, then redraw once it returns. Without
+        this the ticker thread keeps writing progress lines over the picker."""
+        self._pause()
+        try:
+            yield
+        finally:
+            self._resume()
+
+    def _pause(self):
+        with self._lock:
+            self._paused = True
+            if self._tty and self._rendered:
+                # Erase the current block so the picker starts on a clean screen.
+                sys.stdout.write(f"\033[{self._rendered_lines}F\033[J")
+                sys.stdout.flush()
+                self._rendered = False
+                self._rendered_lines = 0
+
+    def _resume(self):
+        with self._lock:
+            self._paused = False
+        self.render()
 
     # ── ticker ────────────────────────────────────────────────────────────
     def _tick_loop(self):
@@ -375,6 +405,9 @@ class Progress:
             return
         term_w = self._term_width()
         with self._lock:
+            if self._paused:
+                # Suspended for an interactive picker; don't draw over it.
+                return
             if self._stop and not self.done:
                 # Aborted by another thread; don't draw over the error/traceback.
                 return

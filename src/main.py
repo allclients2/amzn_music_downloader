@@ -90,7 +90,10 @@ async def download(session, asin, output_dir, min_bitrate, plain=False):
             if isinstance(representations, Exception) or not representations:
                 # Speculative manifest failed (rare for a track) — fetch directly.
                 representations = fetch_representations(session, asin)
-            representation = select_representation(asin, representations, min_bitrate)
+            # With no --min-bitrate this drops into the interactive curses
+            # picker, which must own the terminal — suspend the bar around it.
+            with prog.paused():
+                representation = select_representation(asin, representations, min_bitrate)
             lyrics_resp = None if isinstance(lyrics_res, Exception) else lyrics_res
             await process_track(
                 session, meta, representation, output_dir, True, lyrics_resp,
