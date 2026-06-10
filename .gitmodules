@@ -1,0 +1,3 @@
+[submodule "src/amazonmusic"]
+	path = src/amazonmusic
+	url = https://github.com/bascurtiz/orpheusdl-amazonmusic.git

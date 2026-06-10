@@ -32,7 +32,7 @@ class Keys:
             base64_challenge = base64.b64encode(challenge).decode("utf-8")
             _log.debug("license challenge (truncated): %s", base64_challenge[:50])
 
-            # Signed license request via the vendored Amazon Music API.
+            # Signed license request via the Amazon Music API.
             license_response = session.get_license_response(
                 asin=asin, challenge=base64_challenge, drm_type="WIDEVINE"
             )

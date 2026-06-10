@@ -38,14 +38,14 @@ _DONE = _paint("done", _GREEN)
 
 # Output occupies this fraction of the terminal width (leaves breathing room on
 # the right).
-_WIDTH_FRAC = 0.75
+_WIDTH_FRAC = .8
 
 # Per-track download is measured in these fixed stages (see fetch_track).
 _SINGLE_STEPS = 5     # single-track step bar denominator
 _TRACK_STEPS = 5      # album per-track slot bar denominator
 
 # Fixed column reservations so bar widths never jitter with text length.
-_DESC_MAX = 40        # single-track step description
+_DESC_MAX = 20        # single-track step description
 _SLOT_NAME_W = 7      # truncated track name in a slot line
 _SLOT_DESC_W = 18     # step description in a slot line
 
@@ -233,9 +233,17 @@ class Progress:
         self.render()  # ends on a fresh line below the block (trailing newline)
 
     def abort(self):
-        """The traceback prints cleanly: the last render already left the cursor
-        on the line below the block."""
+        """Stop animating and hand the half-finished block off to `ui` so the
+        error screen that follows replaces it (one screen at a time).
+
+        In plain/verbose mode (no in-place block) nothing was rendered in place,
+        so there's nothing to hand off: the last render already left the cursor on
+        the line below the block and the traceback prints cleanly beneath it."""
         self._shutdown_ticker()
+        if self._tty and self._rendered:
+            # The block's lines are each one physical row (sized to fit the
+            # terminal, never wrapped); register them so ui.print_error erases it.
+            ui.adopt_pending_rows(self._rendered_lines)
 
     # ── ticker ────────────────────────────────────────────────────────────
     def _tick_loop(self):

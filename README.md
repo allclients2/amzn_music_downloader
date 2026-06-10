@@ -22,7 +22,7 @@ This can also be used as a bot. Simply add your bot token to `.env` then run `sr
 ## How it works (APIs & methods)
 
 All network access goes through the multi-region Amazon Music mobile API
-(vendored into `src/vendor/amazonmusic`): a device is registered once via OAuth,
+(the `src/amazonmusic` submodule): a device is registered once via OAuth,
 and every request is RSA-signed. Resolving an ASIN to a tagged FLAC runs through
 metadata, cover art, stream manifest, Widevine decryption, and lyrics, each a
 signed call to a different endpoint.

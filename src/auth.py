@@ -18,11 +18,23 @@ from pathlib import Path
 
 import config
 import ui
-from vendor.amazonmusic.azapi import AmazonMusicMobileAPI
-from vendor.amazonmusic.models import (
+from amzn_api import AmazonMusicMobileAPI
+from amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
     AmazonRegion,
 )
+
+
+class _CompatUnpickler(pickle.Unpickler):
+    """Load credential stores written before the move off the `vendor.amazonmusic`
+    adapter. Those pickles reference `vendor.amazonmusic.models`, which no longer
+    exists, so remap that module onto the submodule's `amazonmusic.models`. The
+    store is rewritten under the new path on the next save."""
+
+    def find_class(self, module, name):
+        if module == "vendor.amazonmusic" or module.startswith("vendor.amazonmusic."):
+            module = "amazonmusic" + module[len("vendor.amazonmusic"):]
+        return super().find_class(module, name)
 
 # Lives in the config/ folder (the program is run from the repo root). The env
 # override is kept for flexibility.
@@ -66,7 +78,7 @@ def _load_store() -> dict:
         return {}
     try:
         with open(path, "rb") as fh:
-            data = pickle.load(fh)
+            data = _CompatUnpickler(fh).load()
     except Exception as exc:  # corrupt/unreadable store -> treat as logged out
         ui.note(f"warning: could not read {path} ({exc}); ignoring.")
         return {}

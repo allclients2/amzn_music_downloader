@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-from vendor.amazonmusic.azapi import AmazonMusicMobileAPI
+from amazonmusic.azapi import AmazonMusicMobileAPI
 
 # muse accepts batched ASIN lookups; chunk album track queries to stay well
 # within request limits.

@@ -183,6 +183,18 @@ def consume_pending_screen() -> None:
     _erase_pending()
 
 
+def adopt_pending_rows(rows: int) -> None:
+    """Register `rows` physical rows drawn outside `ui` (the progress bar's block)
+    as the pending screen, so the next `ui` screen erases them.
+
+    The progress bar paints and rewinds its own block without touching
+    `_pending_rows`; on a download error it hands the leftover block off here so
+    `print_error`'s `_erase_pending` clears it (one screen at a time) instead of
+    leaving the half-finished bar stranded above the error."""
+    global _pending_rows
+    _pending_rows = max(0, rows)
+
+
 # ── screens ──────────────────────────────────────────────────────────────────
 def note(text: str) -> None:
     """Print one faint-grey informational line (the default for incidental output).

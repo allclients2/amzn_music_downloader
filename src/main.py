@@ -16,7 +16,7 @@ from progress import Progress
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Amazon Music archival program",
+        description=ui.paint(f"downloader v{VERSION}", ui.CYAN),
         epilog="Manage accounts: `python src/main.py accounts`",
     )
 
