@@ -13,7 +13,7 @@ Every file lands at:
 ```
 
 > [!NOTE]
-> For personal archival use only. You are responsible for complying with Amazon
+> For education purposes only. You are responsible for complying with Amazon
 > Music's terms and your local laws.
 
 Built and tested on **Windows 11 (25H2)** and **macOS Tahoe (26.4.1)** with
