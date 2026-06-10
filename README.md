@@ -4,7 +4,7 @@
 
 Resolve an Amazon Music **ASIN** to lossless **FLAC, OPUS, MP4, AC4** files for personal archival —
 fully tagged, with embedded cover art and a sidecar `.lrc` of synced lyrics. Ships
-as a **CLI**.
+as a **CLI**. Based upon the [OrpheusDL module.](https://github.com/bascurtiz/orpheusdl-amazonmusic)
 
 Every file lands at:
 
