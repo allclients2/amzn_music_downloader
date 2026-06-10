@@ -1,6 +1,4 @@
 requests
-discord.py
-python-dotenv
 mutagen
 pywidevine==1.8.0
 audible==0.8.2

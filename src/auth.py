@@ -276,8 +276,8 @@ def get_session(
     `account` selects a stored account by id (customer_id), name, or country code;
     `country` selects by region. With neither, the `default_account` from config is
     used, or the sole stored account, or — when interactive — the user is asked to
-    pick one (or sign in). Set `interactive=False` (e.g. the bot worker subprocess)
-    to raise instead of prompting when no single account can be resolved.
+    pick one (or sign in). Set `interactive=False` to raise instead of prompting
+    when no single account can be resolved.
     """
     store = _load_store()
     _sync_accounts(store)  # keep config.json's accounts table current
@@ -294,7 +294,7 @@ def get_session(
                 )
             raise RuntimeError(
                 "No saved Amazon Music login. Run `python src/main.py account --add` "
-                "once to sign in before using the bot."
+                "once to sign in."
             )
         # Interactive: choose among existing accounts, or sign in to a new one.
         if store and account is None and country is None:

@@ -112,12 +112,12 @@ def _fake_album_metadata(session, asin):
     return "album", album
 
 
-def _fake_representations(session, asin):
+def _fake_representations(session, asin, quality=None):
     """Return a parsed-manifest-shaped list (matches mpd_info.parse_mpd output)."""
     return [
         {
             "id": "1",
-            "track_type": "AUDIO",
+            "track_type": "HD",   # umbrella tier as Amazon labels it (CD-quality FLAC)
             "codec": "flac",
             "bandwidth": 940000,
             "sample_rate": "44100",

@@ -20,10 +20,11 @@ replaces the last setup screen. Only our own output is ever cleared; the shell
 prompt above the first screen is left untouched.
 
 Color is emitted only to a real terminal: `paint()` returns plain text when stdout
-is not a TTY (piped output, the bot worker subprocess), so escape codes never leak
+is not a TTY (piped output), so escape codes never leak
 into logs.
 """
 
+import logging
 import re
 import shutil
 import sys
@@ -193,6 +194,74 @@ def adopt_pending_rows(rows: int) -> None:
     leaving the half-finished bar stranded above the error."""
     global _pending_rows
     _pending_rows = max(0, rows)
+
+
+# ── log buffering while the progress bar owns the screen ─────────────────────
+# The animated download bar redraws in place by rewinding a fixed number of rows
+# (`progress.py`), which assumes nothing else writes to the terminal between
+# frames. A stray log line on stderr (the root handler installed below) shifts the
+# cursor and desyncs that rewind, leaving a duplicated header. So while the bar is
+# live we *buffer* log records and release them once it finishes — the bar keeps a
+# clean screen, and warnings still surface (just beneath the completed/aborted bar
+# rather than corrupting it). Verbose runs use the plain renderer and never start
+# buffering, so their logs stream live as before.
+_log_handler = None
+
+
+class _BarAwareHandler(logging.StreamHandler):
+    """A stderr `StreamHandler` that buffers records while a progress bar owns the
+    screen, flushing them in order once the bar releases it."""
+
+    def __init__(self):
+        super().__init__()  # default stream: sys.stderr
+        self._buffering = False
+        self._buffer = []
+
+    def emit(self, record):
+        # logging calls this under `self.lock`, so the buffer access is serialized
+        # with begin_bar/end_bar and concurrent emits from worker threads.
+        if self._buffering:
+            self._buffer.append(record)
+            return
+        super().emit(record)
+
+    def begin_bar(self):
+        with self.lock:
+            self._buffering = True
+
+    def end_bar(self):
+        with self.lock:
+            self._buffering = False
+            buffered, self._buffer = self._buffer, []
+            for record in buffered:
+                super().emit(record)
+
+
+def setup_logging(verbose: bool) -> None:
+    """Install the bar-aware handler on the root logger (replaces `basicConfig`).
+
+    All records — the project's `downloader.*` loggers plus any third-party
+    (pywidevine/urllib3/asyncio) loggers that propagate to root — flow through one
+    handler that can be told to hold output while the download bar is animating."""
+    global _log_handler
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG if verbose else logging.WARNING)
+    if _log_handler is None:
+        _log_handler = _BarAwareHandler()
+        _log_handler.setFormatter(logging.Formatter(logging.BASIC_FORMAT))
+        root.addHandler(_log_handler)
+
+
+def begin_bar_logging() -> None:
+    """Start buffering log output (called when an animated bar takes the screen)."""
+    if _log_handler is not None:
+        _log_handler.begin_bar()
+
+
+def end_bar_logging() -> None:
+    """Stop buffering and flush whatever accumulated while the bar was live."""
+    if _log_handler is not None:
+        _log_handler.end_bar()
 
 
 # ── screens ──────────────────────────────────────────────────────────────────

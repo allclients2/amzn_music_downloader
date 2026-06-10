@@ -1,12 +1,19 @@
-"""Download, decrypt, remux to FLAC, and tag a single track.
+"""Download, decrypt, remux, and tag a single track.
 
 Pipeline: signed manifest -> download encrypted file from BaseURL -> Widevine
-content key (signed license) -> mp4decrypt -> ffmpeg remux to .flac (lossless
-copy of the FLAC stream) -> mutagen FLAC tags + embedded cover -> sidecar .lrc.
+content key (signed license) -> mp4decrypt -> ffmpeg remux -> mutagen tags +
+embedded cover -> sidecar .lrc.
 
-Files land at `<output_dir>/<album_artist>/<album>/<disc> - <track> <title>.flac`;
-the `<album_artist>/<album>/` folders are skipped when `build_folder_structure`
-is False (the bot writes flat into a per-request directory).
+Every codec is stream-copied into its natural container (never transcoded), so
+nothing is lost or pointlessly re-encoded: Amazon HD/UHD FLAC → `.flac`, the lossy
+Opus LD/SD tiers → native `.opus`, and the spatial tiers (Dolby Atmos / Sony 360RA)
+→ `.mp4` (E-AC-3 / MPEG-H, tagged via MP4 atoms) or a raw `.ac4` (Dolby AC-4,
+untaggable). See `_output_spec`.
+
+Files land at `<output_dir>/<album_artist>/<album>/<disc> - <track> <title>.<ext>`
+(`.flac` / `.opus`, or `.mp4` / `.ac4` for spatial); the `<album_artist>/<album>/`
+folders are skipped when `build_folder_structure` is False (the bot writes flat into
+a per-request directory).
 """
 
 import asyncio
@@ -26,7 +33,7 @@ _log = logging.getLogger("downloader.track")
 from keys import Keys
 from lyrics import Lyrics
 from metadata import TrackMetadata
-from mpd_info import find_representation
+from mpd_info import find_representation, _AUDIO_EXTENSIONS
 from util import safe_filename, build_output_filename
 
 _UA = (
@@ -39,6 +46,43 @@ _FRONT_COVER = 3
 # Shared scratch directory (under the output dir) for per-track encrypted /
 # decrypted / remuxed files; each track works in its own subdir inside it.
 _TEMP_SUBDIR = ".downloader"
+
+# Output container/tagging per source codec — always a stream copy, never a
+# transcode: the source codec is kept in its natural container so nothing is lost or
+# pointlessly re-encoded.
+#   • FLAC (Amazon HD/UHD)        → .flac, Vorbis comments
+#   • Opus (the lossy LD/SD tiers) → .opus, Vorbis comments (re-encoding lossy Opus to
+#     FLAC would only bloat it and mislabel it — keep it native)
+#   • Dolby Atmos/DD+ (E-AC-3, AC-3) and MPEG-H 360RA (MHA1/MHM1) → .mp4, MP4 tags
+#     (the .m4a/ipod muxer rejects E-AC-3, so it must be .mp4)
+#   • Dolby AC-4 → raw .ac4 elementary stream; no container, so it can't be tagged
+# `tag_mode`: "flac" | "opus" | "mp4" | None (raw, untaggable).
+def _output_spec(codec):
+    """Return ``(extension, tag_mode)`` for a representation codec."""
+    c = str(codec or "").lower()
+    if c.startswith("opus"):
+        return ".opus", "opus"
+    if c.startswith(("ec-3", "ec3", "eac3", "ac-3", "ac3", "mha", "mhm")):
+        return ".mp4", "mp4"
+    if c.startswith(("ac-4", "ac4")):
+        return ".ac4", None
+    return ".flac", "flac"
+
+
+def _existing_download(track_output_dir: Path, output_filename: str):
+    """The already-downloaded file for this track in any audio extension, or None."""
+    for ext in _AUDIO_EXTENSIONS:
+        candidate = track_output_dir / (output_filename + ext)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _as_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def purge_temp_dir(output_dir: Path) -> None:
@@ -89,39 +133,92 @@ def download_full_file(base_url: str, output_path):
     return output_path
 
 
-def remux_to_flac(src_mp4: Path, dst_flac: Path, codec: str) -> None:
-    """Remux the decrypted (fragmented) MP4 to a .flac container.
+def remux_copy(src_mp4: Path, dst: Path) -> None:
+    """Stream-copy the decrypted audio into `dst` (the extension picks the muxer).
 
-    Amazon HD/UHD audio is FLAC, so we copy the stream losslessly. For any other
-    codec we re-encode to FLAC so a .flac file is still produced.
+    Every codec goes through here — FLAC, Opus, and the spatial formats are all
+    preserved untouched (`-c:a copy`, no transcode). A container that can't carry the
+    stream raises rather than silently re-encoding.
     """
-    lossless = (codec or "").lower().startswith("flac")
     cmd = [
         "ffmpeg", "-nostdin", "-y",
         "-i", str(src_mp4),
         "-map", "0:a",
-        "-c:a", "copy" if lossless else "flac",
-        str(dst_flac),
+        "-c:a", "copy",
+        str(dst),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 and lossless:
-        # Fall back to a re-encode if the stream couldn't be copied.
-        cmd[cmd.index("copy")] = "flac"
-        result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg remux failed:\n{result.stderr}")
 
 
-def _tag_track(flac_path: str, track: TrackMetadata, lyrics, temp_dir: str):
-    """Download the cover into `temp_dir` and embed tags + art (blocking)."""
+def _tag_track(media_path: str, track: TrackMetadata, lyrics, temp_dir: str,
+               tag_mode: str = "flac"):
+    """Download the cover into `temp_dir` and embed tags + art (blocking).
+
+    `tag_mode`: "flac"/"opus" (Vorbis comments), "mp4" (MP4 atoms, for the spatial
+    .mp4 output), or None — a raw elementary stream (AC-4 .ac4) that carries no
+    container, so there's nothing to tag."""
+    if tag_mode is None:
+        return
     with download_temp_artwork(track.cover_url, temp_dir) as artwork_path:
-        embed_metadata_and_cover(flac_path, track, lyrics, artwork_path)
+        if tag_mode == "mp4":
+            embed_metadata_and_cover_mp4(media_path, track, lyrics, artwork_path)
+        elif tag_mode == "opus":
+            embed_metadata_and_cover_opus(media_path, track, lyrics, artwork_path)
+        else:
+            embed_metadata_and_cover(media_path, track, lyrics, artwork_path)
 
 
-def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwork_path):
-    audio = FLAC(flac_path)
+def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, artwork_path):
+    """Tag a spatial .mp4 (Atmos / 360RA) with the same fields as the FLAC path,
+    mapped onto MP4 atoms (`mutagen.mp4`)."""
+    from mutagen.mp4 import MP4, MP4Cover
+
+    audio = MP4(mp4_path)
     audio.delete()  # clear any tags carried over from the source container
 
+    def setv(key, value):
+        if value is not None and value != "":
+            audio[key] = [str(value)]
+
+    setv("\xa9nam", track.title)
+    setv("\xa9ART", track.artist)
+    setv("\xa9alb", track.album_name)
+    setv("aART", track.album_artist)
+    setv("\xa9day", track.release_date)
+    setv("cprt", track.copyright)
+    setv("\xa9gen", track.genre)
+    setv("\xa9wrt", track.composers)
+
+    if track.track_number:
+        audio["trkn"] = [(_as_int(track.track_number), _as_int(track.total_tracks))]
+    if track.disc:
+        audio["disk"] = [(_as_int(track.disc), _as_int(track.total_discs))]
+
+    # Freeform atoms for fields without a standard MP4 key.
+    def freeform(name, value):
+        if value is not None and value != "":
+            audio[f"----:com.apple.iTunes:{name}"] = [str(value).encode("utf-8")]
+
+    freeform("ISRC", track.isrc)
+    freeform("LABEL", track.label)
+    freeform("EXPLICIT", "1" if track.is_explicit else "0")
+    if track.popularity is not None:
+        freeform("POPULARITY", track.popularity)
+
+    if lyrics and lyrics.has_content():
+        setv("\xa9lyr", lyrics.to_mp4_lyrics())
+
+    if artwork_path:
+        with open(artwork_path, "rb") as img:
+            audio["covr"] = [MP4Cover(img.read(), imageformat=MP4Cover.FORMAT_JPEG)]
+
+    audio.save()
+
+
+def _set_vorbis_fields(audio, track: TrackMetadata, lyrics):
+    """Populate Vorbis comments shared by FLAC and Ogg Opus (same key vocabulary)."""
     def setv(key, value):
         if value is not None and value != "":
             audio[key] = str(value)
@@ -143,20 +240,43 @@ def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwo
     setv("EXPLICIT", "1" if track.is_explicit else "0")
     if track.popularity is not None:
         setv("POPULARITY", track.popularity)
-
     if lyrics and lyrics.has_content():
         setv("LYRICS", lyrics.to_mp4_lyrics())
 
-    if artwork_path:
-        with open(artwork_path, "rb") as img:
-            cover_data = img.read()
-        pic = Picture()
-        pic.type = _FRONT_COVER
-        pic.mime = "image/jpeg"
-        pic.desc = "Cover"
-        pic.data = cover_data
-        audio.add_picture(pic)
 
+def _build_cover_picture(artwork_path) -> Picture:
+    """A FLAC `Picture` (front cover) — used directly by FLAC, base64-wrapped by Opus."""
+    with open(artwork_path, "rb") as img:
+        cover_data = img.read()
+    pic = Picture()
+    pic.type = _FRONT_COVER
+    pic.mime = "image/jpeg"
+    pic.desc = "Cover"
+    pic.data = cover_data
+    return pic
+
+
+def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwork_path):
+    audio = FLAC(flac_path)
+    audio.delete()  # clear any tags carried over from the source container
+    _set_vorbis_fields(audio, track, lyrics)
+    if artwork_path:
+        audio.add_picture(_build_cover_picture(artwork_path))
+    audio.save()
+
+
+def embed_metadata_and_cover_opus(opus_path: str, track: TrackMetadata, lyrics, artwork_path):
+    """Tag a native Ogg Opus (lossy LD/SD) file — same Vorbis fields as FLAC, with
+    the cover carried in the standard base64 METADATA_BLOCK_PICTURE comment."""
+    import base64
+    from mutagen.oggopus import OggOpus
+
+    audio = OggOpus(opus_path)
+    audio.delete()
+    _set_vorbis_fields(audio, track, lyrics)
+    if artwork_path:
+        pic = _build_cover_picture(artwork_path)
+        audio["METADATA_BLOCK_PICTURE"] = [base64.b64encode(pic.write()).decode("ascii")]
     audio.save()
 
 
@@ -186,6 +306,8 @@ async def process_track(
         return
 
     rep = representation.mpd_representation
+    # Each codec keeps its native container — stream-copied, never transcoded.
+    extension, tag_mode = _output_spec(rep.get("codec"))
 
     if build_folder_structure:
         safe_album_artist_name = safe_filename(track.album_artist, False)
@@ -196,10 +318,13 @@ async def process_track(
 
     output_filename = build_output_filename(track.disc, track.track_number, track.title)
     track_output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = track_output_dir / (output_filename + ".flac")
+    output_file = track_output_dir / (output_filename + extension)
 
-    if os.path.exists(output_file):
-        _log.info("file %s already exists; skipping.", output_filename)
+    # Skip if the track is already downloaded in *any* format, not just the one this
+    # run would produce (e.g. a prior FLAC when now asking for Opus).
+    existing = _existing_download(track_output_dir, output_filename)
+    if existing is not None:
+        _log.info("file %s already exists (%s); skipping.", output_filename, existing.suffix)
         return
 
     # Per-track temp dir so concurrent downloads don't clobber each other's
@@ -238,15 +363,15 @@ async def process_track(
         shutil.rmtree(temp_dir, ignore_errors=True)
         return
 
-    step("remuxing to flac")
-    flac_temp = temp_dir / "decoded_temp.flac"
-    await asyncio.to_thread(remux_to_flac, decrypted_mp4, flac_temp, rep.get("codec"))
+    step(f"remuxing to {extension.lstrip('.')}")
+    media_temp = temp_dir / ("decoded_temp" + extension)
+    await asyncio.to_thread(remux_copy, decrypted_mp4, media_temp)
 
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
-    await asyncio.to_thread(_tag_track, str(flac_temp), track, lyrics_obj, str(temp_dir))
+    await asyncio.to_thread(_tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode)
 
-    flac_temp.rename(output_file)
+    media_temp.rename(output_file)
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     if lyrics_obj.has_content() and lyrics_obj.to_lrc():

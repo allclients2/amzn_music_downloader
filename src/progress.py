@@ -154,6 +154,10 @@ class Progress:
         self._stop = False
         self._ticker = None
         if self._tty:
+            # While the animated bar owns the screen, buffer log output so stray
+            # WARNING/INFO lines can't shift the cursor and desync the in-place
+            # redraw; the buffer is released on finish()/abort().
+            ui.begin_bar_logging()
             # Animate the marquee + elapsed/ETA between state changes.
             self._ticker = threading.Thread(target=self._tick_loop, daemon=True)
             self._ticker.start()
@@ -231,19 +235,27 @@ class Progress:
             self.desc = desc
         self._shutdown_ticker()
         self.render()  # ends on a fresh line below the block (trailing newline)
+        # Release any log lines buffered while the bar was live; they print just
+        # below the completed bar instead of corrupting it.
+        ui.end_bar_logging()
 
     def abort(self):
-        """Stop animating and hand the half-finished block off to `ui` so the
-        error screen that follows replaces it (one screen at a time).
+        """Stop animating, clear the half-finished block, and surface anything that
+        was buffered while the bar owned the screen, so the error screen that
+        follows replaces the bar (one screen at a time) with any warnings as context.
 
         In plain/verbose mode (no in-place block) nothing was rendered in place,
-        so there's nothing to hand off: the last render already left the cursor on
+        so there's nothing to clear: the last render already left the cursor on
         the line below the block and the traceback prints cleanly beneath it."""
         self._shutdown_ticker()
         if self._tty and self._rendered:
-            # The block's lines are each one physical row (sized to fit the
-            # terminal, never wrapped); register them so ui.print_error erases it.
+            # The block's lines are each one physical row (buffered logging kept
+            # the redraw in sync), so erase it now via the pending-rows machinery,
+            # then drop the buffered logs beneath where it stood.
             ui.adopt_pending_rows(self._rendered_lines)
+            ui.consume_pending_screen()
+            self._rendered = False
+        ui.end_bar_logging()
 
     # ── ticker ────────────────────────────────────────────────────────────
     def _tick_loop(self):

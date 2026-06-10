@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import logging
 import sys
 from pathlib import Path
 
@@ -48,7 +47,10 @@ def parse_args(argv=None):
     parser.add_argument(
         "--default-quality",
         default=None,
-        help="Max quality tier to use: SD, HD, or UHD (default: config default_quality)",
+        metavar="TIER",
+        help="Quality tier: a linear ceiling (LD/SD/HD/UHD or a sub-tier like "
+             "SD_HIGH, HD_44, UHD_48) or a spatial tier (SPATIAL_ATMOS[_LOW/_MEDIUM/"
+             "_HIGH], SPATIAL_RA360[_L0..L3]). Default: config default_quality",
     )
     parser.add_argument(
         "--wvd-path",
@@ -60,7 +62,9 @@ def parse_args(argv=None):
 
 
 async def run_download(args):
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
+    # Route logging through `ui` so the animated download bar can hold back stray
+    # log lines that would otherwise corrupt its in-place redraw (see ui.setup_logging).
+    ui.setup_logging(args.verbose)
 
     # CLI flags override the stored config defaults (generated on first run).
     settings = config.get_settings()
@@ -113,7 +117,13 @@ def _add_account(country=None):
 def run_accounts(argv):
     """`python src/main.py accounts` — interactive account manager. Lists stored
     accounts; selecting one prompts (in red) to remove it, `A` adds a new account,
-    `Q` quits."""
+    `Q` quits.
+
+    With `--add [COUNTRY]` / `--delete ACCOUNT_ID` it skips the menu and runs the
+    direct add/delete action (same as the `account` command)."""
+    if argv:
+        run_account(argv)
+        return
     while True:
         ids, options = _account_options()
         if not ids:
@@ -208,7 +218,7 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
         # manifest/lyrics simply error and are ignored.
         meta_res, reps_res, lyrics_res = await asyncio.gather(
             asyncio.to_thread(fetch_metadata, session, asin),
-            asyncio.to_thread(fetch_representations, session, asin),
+            asyncio.to_thread(fetch_representations, session, asin, quality),
             asyncio.to_thread(session.get_track_lyrics, asin),
             return_exceptions=True,
         )
@@ -222,7 +232,7 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             representations = reps_res
             if isinstance(representations, Exception) or not representations:
                 # Speculative manifest failed (rare for a track) — fetch directly.
-                representations = fetch_representations(session, asin)
+                representations = fetch_representations(session, asin, quality)
             representation = select_representation(asin, representations, quality)
             lyrics_resp = None if isinstance(lyrics_res, Exception) else lyrics_res
             await process_track(
