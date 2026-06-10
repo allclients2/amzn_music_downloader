@@ -1,5 +1,7 @@
 # amzn_music_downloader
 
+![Downloading an album](./assets/image.png)
+
 Resolve an Amazon Music **ASIN** to lossless **FLAC, OPUS, MP4, AC4** files for personal archival —
 fully tagged, with embedded cover art and a sidecar `.lrc` of synced lyrics. Ships
 as a **CLI**.
