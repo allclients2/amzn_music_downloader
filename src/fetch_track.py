@@ -317,7 +317,6 @@ async def process_track(
         track_output_dir = output_dir
 
     output_filename = build_output_filename(track.disc, track.track_number, track.title)
-    track_output_dir.mkdir(parents=True, exist_ok=True)
     output_file = track_output_dir / (output_filename + extension)
 
     # Skip if the track is already downloaded in *any* format, not just the one this
@@ -371,6 +370,7 @@ async def process_track(
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
     await asyncio.to_thread(_tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode)
 
+    track_output_dir.mkdir(parents=True, exist_ok=True)
     media_temp.rename(output_file)
     shutil.rmtree(temp_dir, ignore_errors=True)
 
