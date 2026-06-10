@@ -9,6 +9,7 @@ import ui
 from fetch_track import fetch_track, process_track, purge_temp_dir
 from metadata import fetch_metadata
 from mpd_info import fetch_representations, select_representation
+from search import SEARCH_TYPES, normalize_type, search_catalog
 from _version import VERSION
 from progress import Progress
 
@@ -59,6 +60,81 @@ def parse_args(argv=None):
     )
 
     return parser.parse_args(argv)
+
+
+def parse_search_args(argv):
+    parser = argparse.ArgumentParser(
+        prog="main.py search",
+        description=ui.paint(f"downloader v{VERSION} — search", ui.CYAN),
+    )
+    parser.add_argument(
+        "--query",
+        default=None,
+        help="Search text (prompted for if omitted)",
+    )
+    parser.add_argument(
+        "--type",
+        default=None,
+        choices=tuple(SEARCH_TYPES),
+        help="What to search for (prompted for if omitted)",
+    )
+    parser.add_argument(
+        "--search-limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max results to show (default: config default_search_limit)",
+    )
+    # Shared with the download path so a picked result downloads with these settings.
+    parser.add_argument("--account", default=None, help="Stored account: id, name, or country")
+    parser.add_argument("--output", default=None, help="Directory to save to (default: config)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose + plain progress")
+    parser.add_argument("--default-quality", default=None, metavar="TIER", help="Quality tier (default: config)")
+    parser.add_argument("--wvd-path", default=None, help="Widevine device file (default: config)")
+    return parser.parse_args(argv)
+
+
+async def run_search(args):
+    ui.setup_logging(args.verbose)
+
+    settings = config.get_settings()
+    quality = args.default_quality or settings["default_quality"]
+    wvd_path = args.wvd_path or settings["default_wvd_path"]
+    output_dir = Path(args.output or settings["default_output"])
+    concurrency = settings["default_concurrency"]
+    limit = args.search_limit or settings["default_search_limit"]
+
+    # `--account` selects a stored account (id / name / country); omitted, the
+    # picker is shown when several are stored (ignoring default_account) so each
+    # interactive search can target a different account.
+    session = auth.get_session(account=args.account, select_account=True)
+
+    # Resolve the search type and query, prompting for whichever was omitted. When
+    # both are missing the query is asked first (its header stays the generic
+    # "Search" until the type is known).
+    search_type = normalize_type(args.type) if args.type else None
+    query = args.query
+    if query is None:
+        query = ui.prompt_search_query(search_type)
+    if search_type is None:
+        search_type = ui.prompt_search_type(tuple(SEARCH_TYPES))
+
+    results = await asyncio.to_thread(search_catalog, session, query, search_type, limit)
+    if not results:
+        ui.note(f"No {search_type}s found for '{query}'.")
+        return
+
+    choice = ui.prompt_search_results(search_type, [r.fields for r in results])
+    if choice is None:
+        return
+
+    # Fail fast if the picked result can't be decrypted (mirrors run_download).
+    if not Path(wvd_path).exists():
+        ui.print_error("Widevine device not found")
+        sys.exit(1)
+
+    await download(session, results[choice].asin, output_dir, quality, wvd_path,
+                   plain=args.verbose, concurrency=concurrency)
 
 
 async def run_download(args):
@@ -185,6 +261,8 @@ def main():
     try:
         if argv and argv[0] in ("accounts", "account"):
             run_accounts(argv[1:])
+        elif argv and argv[0] == "search":
+            asyncio.run(run_search(parse_search_args(argv[1:])))
         else:
             asyncio.run(run_download(parse_args(argv)))
     except KeyboardInterrupt:

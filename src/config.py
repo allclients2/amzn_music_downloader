@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
         "default_wvd_path": "device.wvd",
         "default_account": "",
         "default_concurrency": 5,
+        "default_search_limit": 8,
     },
     "accounts": {},
 }

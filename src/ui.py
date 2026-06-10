@@ -471,3 +471,70 @@ def print_account_summary(title: str, options: list[tuple[str, str]]) -> None:
     last = len(options) - 1
     for i, (name, region) in enumerate(options):
         _emit(_account_row(name, region, marker=MARK_CLOSE if i == last else MARK_TEE))
+
+
+# ── search ─────────────────────────────────────────────────────────────────
+def _search_title(type_label: str | None) -> str:
+    """Header subtitle: ``Search tracks`` when the type is known, else ``Search``."""
+    return f"Search {type_label}s" if type_label else "Search"
+
+
+def prompt_search_query(type_label: str | None = None) -> str:
+    """Render the query screen and read the search text:
+
+        │ downloader vX | Search tracks
+        ╰ Enter query:
+    """
+    _erase_pending()
+    _emit(header(_search_title(type_label)))
+    return _read(f"{MARK_CLOSE} {faint('Enter query: ')}").strip()
+
+
+def prompt_search_type(types: tuple[str, ...]) -> str:
+    """Render the type screen and read a valid search type. Re-prompts on
+    unrecognised input. `types` is the tuple of selectable type labels:
+
+        │ downloader vX | Search
+        ╰ Search type (track, album, etc.):
+    """
+    _erase_pending()
+    _emit(header("Search"))
+    prompt = f"{MARK_CLOSE} {faint('Search type (track, album, etc.): ')}"
+    while True:
+        raw = _read(prompt).strip().lower()
+        if raw.endswith("s") and raw[:-1] in types:
+            raw = raw[:-1]
+        if raw in types:
+            return raw
+
+
+def _search_row(fields: tuple[str, ...], index: int) -> str:
+    """One ``├ [n] field - field - field`` row (number yellow, dashes faint)."""
+    label = f"{faint('[')}{paint(str(index), YELLOW)}{faint(']')} "
+    body = faint(" - ").join(f for f in fields if f)
+    return f"{MARK_TEE} {label}{body}"
+
+
+def prompt_search_results(
+    type_label: str, rows: list[tuple[str, ...]]
+) -> int | None:
+    """Render the results picker and return the chosen 0-based index, or None to
+    quit. `rows` is a list of display-column tuples. Re-prompts on invalid input:
+
+        │ downloader vX | Search tracks
+        ├ [1] Track Name - Album Name - Artist Name
+        ├ [2] Track Name - Album Name - Artist Name
+        ╰ Select [1-2] to download, or Q to quit:
+    """
+    _erase_pending()
+    _emit(header(_search_title(type_label)))
+    for i, fields in enumerate(rows, 1):
+        _emit(_search_row(fields, i))
+    n = len(rows)
+    prompt = f"{MARK_CLOSE} {faint(f'Select [1-{n}] to download, or Q to quit: ')}"
+    while True:
+        raw = _read(prompt).strip().lower()
+        if raw in ("q", ""):
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= n:
+            return int(raw) - 1
