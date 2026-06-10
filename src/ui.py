@@ -28,10 +28,45 @@ import logging
 import re
 import shutil
 import sys
-import termios
 import unicodedata
 
 from _version import VERSION
+
+# Raw single-character terminal input is platform-specific: `termios` is POSIX
+# (macOS/Linux), `msvcrt` is its Windows counterpart. Only one is ever importable
+# on a given OS; `read_long_line` dispatches on whichever is present.
+try:
+    import termios  # POSIX
+except ImportError:  # pragma: no cover - Windows
+    termios = None
+try:
+    import msvcrt  # Windows
+except ImportError:  # pragma: no cover - POSIX
+    msvcrt = None
+
+
+def _enable_windows_ansi() -> None:
+    """Turn on ANSI/VT escape-sequence processing for the Windows console.
+
+    Both these screens and `progress.py` are built entirely from ANSI codes
+    (colour, plus the ``\\033[nF`` cursor rewind that powers the in-place
+    redraw). Windows 10+ consoles understand them but need
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING set first — without it the raw escape
+    sequences print as literal garbage. No-op on every non-Windows platform."""
+    if sys.platform != "win32":  # pragma: no cover - exercised only on Windows
+        return
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    enable_vt = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    for handle_id in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+        handle = kernel32.GetStdHandle(handle_id)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | enable_vt)
+
+
+_enable_windows_ansi()
 
 # ── ANSI palette ────────────────────────────────────────────────────────────
 RESET = "\033[0m"
@@ -93,22 +128,31 @@ def read_long_line(prompt: str = "") -> str:
     how many characters have been received, so the user gets clear feedback that the
     paste registered while the prompt stays a single, non-scrolling line.
 
-    Falls back to plain `input` when stdin is not a TTY.
+    Falls back to plain `input` when stdin is not a TTY, and dispatches to the
+    POSIX (`termios`) or Windows (`msvcrt`) raw-read backend by platform.
     """
     if not sys.stdin.isatty():
         return input(prompt)
+    if termios is not None:
+        return _read_long_line_posix(prompt)
+    if msvcrt is not None:  # pragma: no cover - Windows
+        return _read_long_line_windows(prompt)
+    return input(prompt)  # pragma: no cover - no raw-read backend available
+
+
+def _show_paste_count(prompt: str, n: int) -> None:
+    """Redraw the prompt line in place with the running character count, so the
+    paste is visibly acknowledged without echoing the (huge) URL itself."""
+    sys.stdout.write(f"\r\033[K{prompt}[{n} chars]")
+    sys.stdout.flush()
+
+
+def _read_long_line_posix(prompt: str) -> str:
+    """`read_long_line` on POSIX: drop ICANON/ECHO via termios, read raw to EOL."""
     sys.stdout.write(prompt)
     sys.stdout.flush()
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
-
-    def _show_count(n: int) -> None:
-        # Redraw the prompt line in place with the running character count, so the
-        # paste is visibly acknowledged without echoing the (huge) URL itself.
-        # Normal white (not faint), matching how the pasted URL itself used to show.
-        sys.stdout.write(f"\r\033[K{prompt}[{n} chars]")
-        sys.stdout.flush()
-
     try:
         new = termios.tcgetattr(fd)
         # lflags: disable canonical (line-buffered) mode and input echo.
@@ -120,12 +164,38 @@ def read_long_line(prompt: str = "") -> str:
             if c in ("\n", "\r"):
                 break
             chars.append(c)
-            _show_count(len(chars))
+            _show_paste_count(prompt, len(chars))
         return "".join(chars)
     finally:
         termios.tcsetattr(fd, termios.TCSANOW, old)
         sys.stdout.write("\n")
         sys.stdout.flush()
+
+
+def _read_long_line_windows(prompt: str) -> str:  # pragma: no cover - Windows
+    """`read_long_line` on Windows: read wide chars via `msvcrt.getwch`, which is
+    already unbuffered and non-echoing, so the same no-scroll paste counter works."""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    chars = []
+    while True:
+        c = msvcrt.getwch()
+        if c in ("\r", "\n"):
+            break
+        if c == "\x03":  # Ctrl-C: honour interrupt instead of swallowing it.
+            raise KeyboardInterrupt
+        if c in ("\x00", "\xe0"):  # arrow/function keys: 2-char sequence, skip both.
+            msvcrt.getwch()
+            continue
+        if c == "\b":  # backspace
+            if chars:
+                chars.pop()
+        else:
+            chars.append(c)
+        _show_paste_count(prompt, len(chars))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return "".join(chars)
 
 
 # ── one-screen-at-a-time bookkeeping ─────────────────────────────────────────
