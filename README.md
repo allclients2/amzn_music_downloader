@@ -123,7 +123,7 @@ pip install -r requirements.txt
 
 ## First run & authentication
 
-The first download (or your first `account --add`) launches an **interactive
+The first download (or your first `accounts --add`) launches an **interactive
 browser sign-in**:
 
 1. The tool prints an **OAuth URL** — open it in a browser.
@@ -182,14 +182,15 @@ album only fetches what's missing. Albums download several tracks concurrently.
 python src/main.py accounts
 ```
 
-**Direct commands** — add or remove without the menu:
+**Direct commands** — add or remove without the menu (`account` and `accounts` are
+aliases; either spelling works with the menu or these flags):
 
 ```bash
 # Add an account for a given region (omit the code to be prompted)
-python src/main.py account --add US
+python src/main.py accounts --add US
 
 # Remove a stored account by customer id, name, or country code
-python src/main.py account --delete US
+python src/main.py accounts --delete US
 ```
 
 Account selection precedence when downloading: `--account` → config

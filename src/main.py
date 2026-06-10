@@ -115,15 +115,48 @@ def _add_account(country=None):
 
 
 def run_accounts(argv):
-    """`python src/main.py accounts` — interactive account manager. Lists stored
-    accounts; selecting one prompts (in red) to remove it, `A` adds a new account,
-    `Q` quits.
+    """`python src/main.py accounts` (alias: `account`) — account manager. With no
+    flags it runs the interactive menu: lists stored accounts, selecting one prompts
+    (in red) to remove it, `A` adds a new account, `Q` quits.
 
     With `--add [COUNTRY]` / `--delete ACCOUNT_ID` it skips the menu and runs the
-    direct add/delete action (same as the `account` command)."""
+    direct add/delete action."""
     if argv:
-        run_account(argv)
+        parser = argparse.ArgumentParser(
+            prog="main.py accounts",
+            description="Add or remove an Amazon Music account.",
+        )
+        parser.add_argument(
+            "--add",
+            nargs="?",
+            const="",
+            default=None,
+            metavar="COUNTRY",
+            help="Sign in and add an account (optionally for a given 2-letter region).",
+        )
+        parser.add_argument(
+            "--delete",
+            default=None,
+            metavar="ACCOUNT_ID",
+            help="Remove a stored account by customer id, name, or country code.",
+        )
+        args = parser.parse_args(argv)
+
+        if args.delete is not None:
+            try:
+                info = auth.delete_account(args.delete)
+            except KeyError:
+                ui.print_error(f"No stored account matching '{args.delete}'.")
+                sys.exit(1)
+            name = info.get("name") or "Unknown"
+            region = info.get("region") or info.get("country") or "?"
+            ui.note(f"Removed account '{name}' ({region}).")
+        elif args.add is not None:
+            _add_account(args.add or None)
+        else:
+            parser.error("specify --add or --delete")
         return
+
     while True:
         ids, options = _account_options()
         if not ids:
@@ -146,52 +179,12 @@ def run_accounts(argv):
         # Loop back to the refreshed menu.
 
 
-def run_account(argv):
-    """`python src/main.py account --add [COUNTRY]` / `--delete ACCOUNT_ID` —
-    add or remove an account directly without the interactive menu."""
-    parser = argparse.ArgumentParser(
-        prog="main.py account",
-        description="Add or remove an Amazon Music account.",
-    )
-    parser.add_argument(
-        "--add",
-        nargs="?",
-        const="",
-        default=None,
-        metavar="COUNTRY",
-        help="Sign in and add an account (optionally for a given 2-letter region).",
-    )
-    parser.add_argument(
-        "--delete",
-        default=None,
-        metavar="ACCOUNT_ID",
-        help="Remove a stored account by customer id, name, or country code.",
-    )
-    args = parser.parse_args(argv)
-
-    if args.delete is not None:
-        try:
-            info = auth.delete_account(args.delete)
-        except KeyError:
-            ui.print_error(f"No stored account matching '{args.delete}'.")
-            sys.exit(1)
-        name = info.get("name") or "Unknown"
-        region = info.get("region") or info.get("country") or "?"
-        ui.note(f"Removed account '{name}' ({region}).")
-    elif args.add is not None:
-        _add_account(args.add or None)
-    else:
-        parser.error("specify --add or --delete")
-
-
 def main():
     argv = sys.argv[1:]
     verbose = "-v" in argv or "--verbose" in argv
     try:
-        if argv and argv[0] == "accounts":
+        if argv and argv[0] in ("accounts", "account"):
             run_accounts(argv[1:])
-        elif argv and argv[0] == "account":
-            run_account(argv[1:])
         else:
             asyncio.run(run_download(parse_args(argv)))
     except KeyboardInterrupt:
