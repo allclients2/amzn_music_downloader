@@ -1,5 +1,5 @@
 [project]
 name = "amzn_music_downloader"
-version = "2.6"
+version = "2.7"
 description = "Download tracks and albums from Amazon Music"
 requires-python = ">=3.11"
