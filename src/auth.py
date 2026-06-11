@@ -304,7 +304,6 @@ def get_session(
             else:
                 return login(_prompt_country())
         else:
-            # Nothing stored, or a specific region requested but not stored yet.
             if not store:
                 ui.note("No saved Amazon Music login found.")
             return login(country or _prompt_country())

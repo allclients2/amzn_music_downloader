@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
         "default_wvd_path": "device.wvd",
         "default_account": "",
         "default_concurrency": 5,
+        "default_metadata_concurrency": 10,
         "default_search_limit": 8,
     },
     "accounts": {},
@@ -85,7 +86,7 @@ def load_config() -> dict:
 
 def get_settings() -> dict:
     """The `config` sub-table: default_quality / default_output / default_wvd_path /
-    default_account / default_concurrency."""
+    default_account / default_concurrency / default_metadata_concurrency."""
     return load_config()["config"]
 
 

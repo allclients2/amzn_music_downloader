@@ -1,12 +1,18 @@
-"""Track & album metadata via the `muse` API.
+"""Track, album, artist & playlist metadata via the submodule API.
 
-Resolves an ASIN to a `TrackMetadata` or `AlbumMetadata` dataclass using the
-signed `AmazonMusicMobileAPI.get_metadata()` (`muse`) endpoint, which supplies
-disc/track numbers, duration, ISRC, explicit flag, popularity, composers, and the
-album tags (release date, copyright, label, genre). Full-resolution cover art is
-resolved separately through `textsearch` (`artOriginal.artUrl`).
+Resolves an ASIN to a `TrackMetadata` / `AlbumMetadata` / `ArtistMetadata` /
+`PlaylistMetadata` dataclass. Tracks and albums come from the signed
+`AmazonMusicMobileAPI.get_metadata()` (`muse`) endpoint, which supplies disc/track
+numbers, duration, ISRC, explicit flag, popularity, composers, and the album tags
+(release date, copyright, label, genre). Full-resolution cover art is resolved
+separately through `textsearch` (`artOriginal.artUrl`).
+
+Artists and playlists are resolved purely through submodule endpoints (no catalog
+search): an artist's discography is harvested from its `get_page("artist/<asin>")`
+catalog page, and a playlist's members from `get_catalog_playlist`.
 """
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -57,6 +63,25 @@ class AlbumMetadata:
     track_count: int
     total_discs: int
     tracks: List[TrackMetadata] = field(default_factory=list)
+
+
+@dataclass
+class PlaylistMetadata:
+    """A playlist resolved to its member tracks. Each `TrackMetadata` keeps its own
+    album/artist tags, so tracks still land under `<album_artist>/<album>/`; `name`
+    is only used for the progress header."""
+    name: str
+    asin: str
+    tracks: List[TrackMetadata] = field(default_factory=list)
+
+
+@dataclass
+class ArtistMetadata:
+    """An artist resolved to the ASINs of every album in its discography. The album
+    pipeline is then run per ASIN, so no per-track data is carried here."""
+    name: str
+    asin: str
+    album_asins: List[str] = field(default_factory=list)
 
 
 def _ms_to_date(ms) -> Optional[str]:
@@ -207,13 +232,31 @@ def _fetch_tracks(session: AmazonMusicMobileAPI, asins: List[str]) -> dict:
 def fetch_metadata(
     session: AmazonMusicMobileAPI, content_asin: str
 ) -> Tuple[str, object]:
-    """Resolve an ASIN to ('track', TrackMetadata) or ('album', AlbumMetadata)."""
-    resp = session.get_metadata((content_asin,))
+    """Resolve an ASIN to its kind and metadata:
+
+    ('track', TrackMetadata), ('album', AlbumMetadata),
+    ('artist', ArtistMetadata), or ('playlist', PlaylistMetadata).
+    """
+    # Playlists aren't served by the muse lookup endpoint, so a playlist ASIN can
+    # make get_metadata error — swallow that and fall through to the playlist path.
+    try:
+        resp = session.get_metadata((content_asin,))
+    except Exception:
+        resp = {}
     tracks_list = resp.get("trackList") or []
     albums_list = resp.get("albumList") or []
+    artists_list = resp.get("artistList") or []
 
     track_data = next((t for t in tracks_list if t.get("asin") == content_asin), None)
     album_match = next((a for a in albums_list if a.get("asin") == content_asin), None)
+    artist_match = next((a for a in artists_list if a.get("asin") == content_asin), None)
+
+    # ── Artist ────────────────────────────────────────────────────────────
+    # An artist lookup can also surface the artist's popular tracks/top albums, so
+    # only an exact artistList hit (or a response carrying *nothing but* artists)
+    # routes here — otherwise the track/album fallbacks below stay in charge.
+    if artist_match or (artists_list and not albums_list and not tracks_list):
+        return "artist", _build_artist(session, artist_match or artists_list[0], content_asin)
 
     # ── Single track ──────────────────────────────────────────────────────
     if track_data or (tracks_list and not album_match):
@@ -234,7 +277,14 @@ def fetch_metadata(
     # ── Full album ────────────────────────────────────────────────────────
     album_data = album_match or (albums_list[0] if albums_list else None)
     if not album_data:
-        raise ValueError(f"ASIN {content_asin} did not resolve to a track or album")
+        # Not a track/album/artist — the only remaining content the pipeline can
+        # resolve is a (catalog) playlist, served by a different endpoint.
+        playlist = _try_fetch_playlist(session, content_asin)
+        if playlist is not None:
+            return "playlist", playlist
+        raise ValueError(
+            f"ASIN {content_asin} did not resolve to a track, album, artist, or playlist"
+        )
 
     disc_total = _disc_total(album_data)
     track_count = int(album_data.get("trackCount") or 0)
@@ -268,3 +318,160 @@ def fetch_metadata(
         tracks=tracks,
     )
     return "album", album
+
+
+# ── Artist ──────────────────────────────────────────────────────────────────
+# Album ASINs are discovered from the artist's catalog pages (`get_page`), never
+# from textsearch. The page payload models each album as a dict tagged with a
+# `__type` of `...brush#Album`, whose `asin` is the album ASIN.
+_ALBUM_TYPE_SUFFIX = "#Album"
+_ARTIST_PAGE_MAX_PAGES = 40   # hard stop on discography pagination
+
+
+def _find_next_token(obj) -> Optional[str]:
+    """The pagination `nextToken` anywhere in a get_page payload, or None."""
+    stack = [obj]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for key, value in cur.items():
+                lk = str(key).lower()
+                if "next" in lk and "token" in lk and value:
+                    return str(value)
+                if isinstance(value, (dict, list, tuple)):
+                    stack.append(value)
+        elif isinstance(cur, (list, tuple)):
+            stack.extend(cur)
+    return None
+
+
+def _collect_album_asins(obj, seen: set, ordered: List[str]) -> None:
+    """Append (in encounter order, de-duped) the ASIN of every album entity — a
+    dict whose `__type` ends in `#Album` — found anywhere in a get_page payload."""
+    if isinstance(obj, dict):
+        if str(obj.get("__type", "")).endswith(_ALBUM_TYPE_SUFFIX) and obj.get("asin"):
+            asin = str(obj["asin"])
+            if asin not in seen:
+                seen.add(asin)
+                ordered.append(asin)
+        for value in obj.values():
+            if isinstance(value, (dict, list, tuple)):
+                _collect_album_asins(value, seen, ordered)
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            _collect_album_asins(item, seen, ordered)
+
+
+def _artist_album_asins(session: AmazonMusicMobileAPI, artist_asin: str) -> List[str]:
+    """Every album ASIN in an artist's discography, de-duped, with no catalog search.
+
+    The artist landing page (`artist/<asin>`) surfaces the popular/new-release
+    albums up front, then the `chronological-albums` shoveler is paginated (via its
+    `nextToken`) for the complete discography.
+    """
+    seen: set = set()
+    ordered: List[str] = []
+
+    try:
+        _collect_album_asins(session.get_page(f"artist/{artist_asin}"), seen, ordered)
+    except Exception:
+        pass
+
+    next_token = None
+    for _ in range(_ARTIST_PAGE_MAX_PAGES):
+        try:
+            page = session.get_page(
+                f"artist/{artist_asin}/chronological-albums", next_token=next_token
+            )
+        except Exception:
+            break
+        _collect_album_asins(page, seen, ordered)
+        next_token = _find_next_token(page)
+        if not next_token:
+            break
+    return ordered
+
+
+def _build_artist(
+    session: AmazonMusicMobileAPI, artist_data: dict, content_asin: str
+) -> ArtistMetadata:
+    artist_asin = str(artist_data.get("asin") or content_asin)
+    return ArtistMetadata(
+        name=artist_data.get("name") or "Unknown Artist",
+        asin=artist_asin,
+        album_asins=_artist_album_asins(session, artist_asin),
+    )
+
+
+# ── Playlist ────────────────────────────────────────────────────────────────
+def _playlist_track_asin(track: dict) -> Optional[str]:
+    """The track ASIN from a playlist member entry (nested under `metadata` or flat)."""
+    if not isinstance(track, dict):
+        return None
+    meta = track.get("metadata")
+    if isinstance(meta, dict) and meta.get("asin"):
+        return str(meta["asin"])
+    if track.get("asin"):
+        return str(track["asin"])
+    return None
+
+
+def _build_tracks_from_asins(
+    session: AmazonMusicMobileAPI, track_asins: List[str]
+) -> List[TrackMetadata]:
+    """`TrackMetadata` for an arbitrary list of track ASINs (playlist members).
+
+    The muse lookups are batched, and each distinct album is fetched (and its cover
+    resolved) only once, while the original track order is preserved.
+    """
+    rich = _fetch_tracks(session, track_asins)
+    album_cache: dict = {}
+    cover_cache: dict = {}
+    tracks: List[TrackMetadata] = []
+    for asin in track_asins:
+        td = rich.get(asin)
+        if not td:
+            continue
+        album_asin = (td.get("album") or {}).get("asin")
+        if not album_asin:
+            continue
+        if album_asin not in album_cache:
+            album_data = _fetch_album_data(session, album_asin)
+            album_cache[album_asin] = album_data
+            cover_cache[album_asin] = _hi_res_cover(session, album_data)
+        album_data = album_cache[album_asin]
+        tracks.append(
+            _build_track(td, album_data, _disc_total(album_data), cover_cache[album_asin])
+        )
+    return tracks
+
+
+def _try_fetch_playlist(
+    session: AmazonMusicMobileAPI, playlist_asin: str
+) -> Optional[PlaylistMetadata]:
+    """Resolve a catalog-playlist ASIN to a `PlaylistMetadata`, or None if the ASIN
+    isn't a playlist (so the caller can raise a single combined error)."""
+    try:
+        catalog = session.get_catalog_playlist(playlist_asin)
+    except Exception:
+        return None
+    if not isinstance(catalog, dict):
+        return None
+    p_data = catalog.get("playlist")
+    if not isinstance(p_data, dict):
+        p_data = catalog
+    raw_tracks = p_data.get("tracks") or []
+    track_asins = [a for a in (_playlist_track_asin(t) for t in raw_tracks) if a]
+    if not track_asins:
+        return None
+    tracks = _build_tracks_from_asins(session, track_asins)
+    if not tracks:
+        return None
+    meta = p_data.get("metadata") if isinstance(p_data.get("metadata"), dict) else {}
+    name = (
+        meta.get("title")
+        or p_data.get("title")
+        or p_data.get("name")
+        or "Unknown Playlist"
+    )
+    return PlaylistMetadata(name=str(name), asin=str(playlist_asin), tracks=tracks)

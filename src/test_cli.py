@@ -6,10 +6,12 @@ pipeline are all replaced with fakes. The simulated work walks through the same
 step descriptions the real code emits, with short sleeps so the progress bar
 animates the way it would for a genuine fetch.
 
-Two modes, matching the two branches of `main.download()`:
+Four modes, matching the branches of `main.download()`:
 
     python src/test_cli.py              # single track (default)
     python src/test_cli.py --album      # multi-track album
+    python src/test_cli.py --playlist   # playlist (flat set of tracks)
+    python src/test_cli.py --artist     # artist (sequence of albums)
     python src/test_cli.py B07JZ7PW6F   # single track, your own ASIN
     python src/test_cli.py --album B07X # album, your own ASIN
 """
@@ -19,11 +21,13 @@ import random
 import sys
 
 import main
-from metadata import AlbumMetadata, TrackMetadata
+from metadata import AlbumMetadata, ArtistMetadata, PlaylistMetadata, TrackMetadata
 
 # Made-up ASINs; nothing is ever sent anywhere.
 _FAKE_TRACK_ASIN = "B0FAKETRACK"
 _FAKE_ALBUM_ASIN = "B0FAKEALBUM"
+_FAKE_PLAYLIST_ASIN = "B0FAKEPLST"
+_FAKE_ARTIST_ASIN = "B0FAKEARTS"
 
 # Mirrors the stage descriptions emitted by the real fetch_track.process_track,
 # paired with how long to pretend each stage takes (seconds).
@@ -112,6 +116,30 @@ def _fake_album_metadata(session, asin):
     return "album", album
 
 
+def _fake_playlist_metadata(session, asin):
+    """Return ('playlist', PlaylistMetadata) exactly like metadata.fetch_metadata."""
+    n = len(_ALBUM_TRACKS)
+    tracks = [
+        _make_track(f"{asin}T{i:02d}", title, track_number=i, total_tracks=n)
+        for i, title in enumerate(_ALBUM_TRACKS, start=1)
+    ]
+    return "playlist", PlaylistMetadata(
+        name="Fake Playlist: A Marquee Example Mix", asin=asin, tracks=tracks
+    )
+
+
+def _fake_artist_metadata(session, asin):
+    """Dispatch like metadata.fetch_metadata: the artist ASIN resolves to a list of
+    album ASINs, and each of those resolves to a full album (download() recurses)."""
+    if asin == _FAKE_ARTIST_ASIN:
+        return "artist", ArtistMetadata(
+            name="Fake Artist",
+            asin=asin,
+            album_asins=[f"{_FAKE_ALBUM_ASIN}1", f"{_FAKE_ALBUM_ASIN}2"],
+        )
+    return _fake_album_metadata(session, asin)
+
+
 def _fake_representations(session, asin, quality=None):
     """Return a parsed-manifest-shaped list (matches mpd_info.parse_mpd output)."""
     return [
@@ -154,13 +182,24 @@ async def _fake_fetch_track(session, track, output_dir, quality,
 def main_test():
     argv = sys.argv[1:]
     album = "--album" in argv
-    argv = [a for a in argv if a != "--album"]
-    asin = argv[0] if argv else (_FAKE_ALBUM_ASIN if album else _FAKE_TRACK_ASIN)
+    playlist = "--playlist" in argv
+    artist = "--artist" in argv
+    argv = [a for a in argv if a not in ("--album", "--playlist", "--artist")]
+
+    if artist:
+        default_asin, fake_metadata = _FAKE_ARTIST_ASIN, _fake_artist_metadata
+    elif playlist:
+        default_asin, fake_metadata = _FAKE_PLAYLIST_ASIN, _fake_playlist_metadata
+    elif album:
+        default_asin, fake_metadata = _FAKE_ALBUM_ASIN, _fake_album_metadata
+    else:
+        default_asin, fake_metadata = _FAKE_TRACK_ASIN, _fake_track_metadata
+    asin = argv[0] if argv else default_asin
 
     # Patch every network/IO boundary on the `main` module namespace so the real
     # download() orchestration and Progress rendering run for real, unmocked.
     main.auth.get_session = lambda *a, **k: FakeSession()
-    main.fetch_metadata = _fake_album_metadata if album else _fake_track_metadata
+    main.fetch_metadata = fake_metadata
     main.fetch_representations = _fake_representations
     main.process_track = _fake_process_track
     main.fetch_track = _fake_fetch_track

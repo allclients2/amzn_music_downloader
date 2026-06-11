@@ -14,21 +14,10 @@ from _version import VERSION
 from progress import Progress
 
 
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(
-        description=ui.paint(f"downloader v{VERSION}", ui.CYAN),
-        epilog="Manage accounts: `python src/main.py accounts`",
-    )
-
-    parser.add_argument(
-        "content_asin",
-        help="ASIN of the track or album to download",
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"downloader v{VERSION}",
-    )
+def _add_download_args(parser):
+    """Add the settings flags shared by the download and search commands. A picked
+    search result downloads with these, so both parsers must expose them identically
+    (they all fall back to the matching `config.json` default when omitted)."""
     parser.add_argument(
         "--account",
         default=None,
@@ -58,6 +47,32 @@ def parse_args(argv=None):
         default=None,
         help="Path to the Widevine device file (default: config default_wvd_path)",
     )
+    parser.add_argument(
+        "--metadata-concurrency",
+        type=int,
+        default=None,
+        metavar="N",
+        help="How many album-metadata lookups to run at once when downloading an "
+             "artist (default: config default_metadata_concurrency)",
+    )
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description=ui.paint(f"downloader v{VERSION}", ui.CYAN),
+        epilog="Manage accounts: `python src/main.py accounts`",
+    )
+
+    parser.add_argument(
+        "content_asin",
+        help="ASIN of the track, album, artist, or playlist to download",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"downloader v{VERSION}",
+    )
+    _add_download_args(parser)
 
     return parser.parse_args(argv)
 
@@ -85,12 +100,8 @@ def parse_search_args(argv):
         metavar="N",
         help="Max results to show (default: config default_search_limit)",
     )
-    # Shared with the download path so a picked result downloads with these settings.
-    parser.add_argument("--account", default=None, help="Stored account: id, name, or country")
-    parser.add_argument("--output", default=None, help="Directory to save to (default: config)")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose + plain progress")
-    parser.add_argument("--default-quality", default=None, metavar="TIER", help="Quality tier (default: config)")
-    parser.add_argument("--wvd-path", default=None, help="Widevine device file (default: config)")
+    # A picked result downloads with these settings (see _add_download_args).
+    _add_download_args(parser)
     return parser.parse_args(argv)
 
 
@@ -102,6 +113,7 @@ async def run_search(args):
     wvd_path = args.wvd_path or settings["default_wvd_path"]
     output_dir = Path(args.output or settings["default_output"])
     concurrency = settings["default_concurrency"]
+    metadata_concurrency = args.metadata_concurrency or settings["default_metadata_concurrency"]
     limit = args.search_limit or settings["default_search_limit"]
 
     # `--account` selects a stored account (id / name / country); omitted, the
@@ -133,7 +145,8 @@ async def run_search(args):
         sys.exit(1)
 
     await download(session, results[choice].asin, output_dir, quality, wvd_path,
-                   plain=args.verbose, concurrency=concurrency)
+                   plain=args.verbose, concurrency=concurrency,
+                   metadata_concurrency=metadata_concurrency)
 
 
 async def run_download(args):
@@ -147,6 +160,7 @@ async def run_download(args):
     wvd_path = args.wvd_path or settings["default_wvd_path"]
     output_dir = Path(args.output or settings["default_output"])
     concurrency = settings["default_concurrency"]
+    metadata_concurrency = args.metadata_concurrency or settings["default_metadata_concurrency"]
 
     # Fail fast with a friendly screen when the Widevine device file is missing:
     # decryption can't proceed without it, so don't prompt for an account or start
@@ -161,7 +175,8 @@ async def run_download(args):
     session = auth.get_session(account=args.account)
 
     await download(session, args.content_asin, output_dir, quality, wvd_path,
-                   plain=args.verbose, concurrency=concurrency)
+                   plain=args.verbose, concurrency=concurrency,
+                   metadata_concurrency=metadata_concurrency)
 
 
 def _account_options():
@@ -277,7 +292,7 @@ def main():
 
 
 async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False,
-                   concurrency=5):
+                   concurrency=5, metadata_concurrency=10):
     prog = Progress(asin=asin, plain=plain)
     prog.set_desc("fetching metadata, manifest & lyrics")
 
@@ -297,6 +312,17 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             raise meta_res
         kind, meta = meta_res
 
+        if kind == "artist":
+            # An artist resolves to a list of album ASINs (discovered from its
+            # catalog page, not search). Hand off to a fresh two-phase bar (album
+            # metadata, then track downloads); tear down this placeholder first.
+            prog.abort()
+            await _download_artist(
+                session, asin, meta, output_dir, quality, wvd_path, plain,
+                concurrency, metadata_concurrency
+            )
+            return
+
         if kind == "track":
             prog.set_name(meta.title)
             representations = reps_res
@@ -311,10 +337,12 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             )
             prog.finish()
         else:
-            # Album: download up to `concurrency` tracks at once. The aggregate
-            # line counts completed tracks; each in-flight track gets its own
-            # step-progress slot line.
-            prog.set_name(meta.album_name)
+            # Album or playlist: a flat set of tracks downloaded up to
+            # `concurrency` at once. The aggregate line counts completed tracks;
+            # each in-flight track gets its own step-progress slot line. A
+            # playlist's tracks keep their own album tags, so each still lands
+            # under `<album_artist>/<album>/`.
+            prog.set_name(meta.album_name if kind == "album" else meta.name)
             prog.begin_album(len(meta.tracks))
             sem = asyncio.Semaphore(concurrency)
 
@@ -332,6 +360,75 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
 
             await asyncio.gather(*(run_track(t) for t in meta.tracks))
             prog.finish()
+    except Exception:
+        prog.abort()
+        raise
+    finally:
+        purge_temp_dir(output_dir)
+
+
+async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
+                           plain, concurrency, metadata_concurrency):
+    """Download an artist's whole discography in two phases under one progress bar:
+
+    1. Fetch every album's metadata up front, `metadata_concurrency` at a time — a
+       single aggregate bar counting albums (albums/s).
+    2. Flatten all albums into one track list and download them like a big album —
+       the multi-slot track view (tracks/s), `concurrency` tracks at a time.
+
+    A failed album metadata lookup is skipped so the rest of the discography still
+    downloads."""
+    albums = artist.album_asins
+    if not albums:
+        ui.note(f"No albums found for artist '{artist.name}'.")
+        return
+
+    prog = Progress(asin=asin, plain=plain)
+    prog.set_name(artist.name)
+    try:
+        # ── Phase 1: fetch all album metadata (albums/s) ──────────────────────
+        prog.begin_album(len(albums), rate_label="albums/s")
+        meta_sem = asyncio.Semaphore(max(1, metadata_concurrency))
+        metas = []
+
+        async def fetch_one(album_asin):
+            async with meta_sem:
+                try:
+                    kind, meta = await asyncio.to_thread(fetch_metadata, session, album_asin)
+                    if kind == "album" and getattr(meta, "tracks", None):
+                        metas.append(meta)
+                except Exception:
+                    pass  # one bad album shouldn't sink the discography
+                finally:
+                    prog.advance_aggregate()
+
+        await asyncio.gather(*(fetch_one(a) for a in albums))
+
+        # Flatten the discography into a single track list.
+        tracks = [track for meta in metas for track in meta.tracks]
+        if not tracks:
+            prog.abort()
+            ui.note(f"No downloadable tracks found for artist '{artist.name}'.")
+            return
+
+        # ── Phase 2: download every track (tracks/s) ──────────────────────────
+        prog.begin_album(len(tracks), rate_label="tracks/s")
+        sem = asyncio.Semaphore(concurrency)
+
+        async def run_track(track):
+            async with sem:
+                slot = prog.track_start(track.title)
+                try:
+                    await fetch_track(
+                        session, track, output_dir, quality,
+                        on_step=lambda d: prog.track_step(slot, d),
+                        wvd_path=wvd_path,
+                    )
+                finally:
+                    prog.track_done(slot)
+
+        await asyncio.gather(*(run_track(t) for t in tracks))
+        prog.finish()
     except Exception:
         prog.abort()
         raise

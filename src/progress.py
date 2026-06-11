@@ -142,6 +142,7 @@ class Progress:
         self.track_total = 0
         self.album_start = None
         self._agg_reserve = 0
+        self._rate_label = "tracks/s"   # aggregate rate unit (see begin_album)
 
         # `plain` (e.g. verbose mode) disables the in-place redraw so log output
         # doesn't fight the bar.
@@ -179,17 +180,28 @@ class Progress:
         self.render()
 
     # ── public API: album ───────────────────────────────────────────────────
-    def begin_album(self, total: int):
-        """Switch to the multi-track concurrent layout."""
+    def begin_album(self, total: int, rate_label: str = "tracks/s"):
+        """(Re)start the multi-item aggregate layout. `rate_label` names the unit of
+        the aggregate's per-second rate — "tracks/s" for a track download, "albums/s"
+        for the artist's up-front album-metadata phase. Calling it again switches
+        phases (e.g. albums/s metadata → tracks/s download) on the same bar."""
         with self._lock:
             self._album = True
+            self._rate_label = rate_label
             self.track_total = max(1, total)
             self.completed = 0
             self.album_start = time.time()
             self._slots = []
             cw = len(str(self.track_total))
-            sample = f"{self.track_total:>{cw}}/{self.track_total}  [00:00<00:00,  0.0 tracks/s]"
+            sample = f"{self.track_total:>{cw}}/{self.track_total}  [00:00<00:00,  0.0 {rate_label}]"
             self._agg_reserve = _disp_width(sample)
+        self.render()
+
+    def advance_aggregate(self, n: int = 1):
+        """Bump the aggregate completed-count by `n` with no per-item slot — used by
+        the artist's album-metadata phase, which shows only the aggregate bar."""
+        with self._lock:
+            self.completed += n
         self.render()
 
     def track_start(self, name: str, steps: int = _TRACK_STEPS) -> _Slot:
@@ -335,7 +347,7 @@ class Progress:
             rate = self.completed / elapsed if elapsed > 0 else 0.0
             eta = (self.track_total - self.completed) / rate if rate > 0 else 0.0
             suffix = _paint(
-                f"{count}  [{_fmt_time(elapsed)}<{_fmt_time(eta)}, {rate:4.1f} tracks/s]",
+                f"{count}  [{_fmt_time(elapsed)}<{_fmt_time(eta)}, {rate:4.1f} {self._rate_label}]",
                 _FAINT,
             )
         # Reserve a fixed suffix slot so the aggregate bar width stays constant.
