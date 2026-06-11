@@ -2,14 +2,17 @@
 
 Resolves a free-text query to a short list of `SearchResult`s (an ASIN plus the
 display columns the picker shows). The CLI feeds the chosen result's ASIN straight
-into the normal download pipeline (`metadata.fetch_metadata` -> ...), so only the
-catalog types that pipeline can actually download — a single **track** or a full
-**album** — are offered here.
+into the normal download pipeline (`metadata.fetch_metadata` -> ...). Every catalog
+type that pipeline resolves is offered here — a single **track**, a full **album**,
+an **artist** (whole discography) or a (catalog) **playlist**.
 
 The underlying `AmazonMusicMobileAPI.search()` (the same `textsearch` endpoint
 `metadata._hi_res_cover` uses) returns a tuple of raw document dicts when no `asins`
 filter is given; the field names below come from those documents
-(`com.amazon.music.platform.model#CatalogTrack` / `#CatalogAlbum`).
+(`com.amazon.music.platform.model#CatalogTrack` / `#CatalogAlbum` /
+`#CatalogArtist` / `#CatalogPlaylist`). The shapes differ: a track/album/playlist
+names itself in `title`, but an **artist** document uses `name` (and carries no
+`artistName`); a playlist exposes a `trackCount` rather than an artist.
 """
 
 from dataclasses import dataclass
@@ -21,6 +24,8 @@ from amzn_api import AmazonMusicMobileAPI
 SEARCH_TYPES = {
     "track": "catalog_track",
     "album": "catalog_album",
+    "artist": "catalog_artist",
+    "playlist": "catalog_playlist",
 }
 
 
@@ -34,7 +39,7 @@ class SearchResult:
 def normalize_type(value: str) -> str:
     """Map user input (case-insensitive, optional trailing 's') to a known type.
 
-    Raises `ValueError` for anything we can't download (e.g. an artist/playlist)."""
+    Raises `ValueError` for anything outside `SEARCH_TYPES`."""
     norm = (value or "").strip().lower()
     if norm.endswith("s") and norm[:-1] in SEARCH_TYPES:
         norm = norm[:-1]
@@ -52,8 +57,15 @@ def _fields(search_type: str, doc: dict) -> Tuple[str, ...]:
     if search_type == "track":
         # Track Name - Album Name - Artist Name
         return (title, doc.get("albumName") or "?", artist)
-    # album: Album Name - Artist Name
-    return (title, artist)
+    if search_type == "album":
+        # Album Name - Artist Name
+        return (title, artist)
+    if search_type == "artist":
+        # Artist documents name themselves in `name`, not `title`.
+        return (doc.get("name") or doc.get("title") or "?",)
+    # playlist: Playlist Name - N tracks (no artist; trackCount stands in).
+    count = doc.get("trackCount")
+    return (title, f"{count} tracks") if count else (title,)
 
 
 def search_catalog(

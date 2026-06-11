@@ -100,7 +100,6 @@ def parse_search_args(argv):
         metavar="N",
         help="Max results to show (default: config default_search_limit)",
     )
-    # A picked result downloads with these settings (see _add_download_args).
     _add_download_args(parser)
     return parser.parse_args(argv)
 
