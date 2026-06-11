@@ -105,9 +105,8 @@ async def run_search(args):
     limit = args.search_limit or settings["default_search_limit"]
 
     # `--account` selects a stored account (id / name / country); omitted, the
-    # picker is shown when several are stored (ignoring default_account) so each
-    # interactive search can target a different account.
-    session = auth.get_session(account=args.account, select_account=True)
+    # default_account is used, then the sole account, else the picker is shown.
+    session = auth.get_session(account=args.account)
 
     # Resolve the search type and query, prompting for whichever was omitted. When
     # both are missing the query is asked first (its header stays the generic

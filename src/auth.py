@@ -270,7 +270,6 @@ def get_session(
     account: str | None = None,
     country: str | None = None,
     interactive: bool = True,
-    select_account: bool = False,
 ) -> AmazonMusicMobileAPI:
     """Return a ready-to-use signed session, signing in interactively if needed.
 
@@ -279,21 +278,9 @@ def get_session(
     used, or the sole stored account, or — when interactive — the user is asked to
     pick one (or sign in). Set `interactive=False` to raise instead of prompting
     when no single account can be resolved.
-
-    `select_account=True` always shows the picker when nothing specific was
-    requested and several accounts are stored — i.e. it ignores `default_account`
-    so the caller (the interactive `search` command) lets the user choose each run.
     """
     store = _load_store()
     _sync_accounts(store)  # keep config.json's accounts table current
-
-    if (select_account and interactive and account is None and country is None
-            and len(store) > 1):
-        # Skip the default_account/sole-account shortcut and prompt directly.
-        chosen = _prompt_account(store)
-        if chosen is not None:
-            return _ready_session(store[chosen])
-        return login(_prompt_country())
 
     credentials = _select_credentials(store, account, country)
 
