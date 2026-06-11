@@ -290,6 +290,17 @@ def main():
         sys.exit(1)
 
 
+def _note_skipped(results):
+    """Emit a "N file(s) already exist; skipped." note when any track was skipped.
+
+    `results` are the truthy/None values returned by process_track/fetch_track —
+    True for a track whose output already existed.
+    """
+    skipped = sum(1 for r in results if r)
+    if skipped:
+        ui.note(f"{skipped} file(s) already exist; skipped.")
+
+
 async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False,
                    concurrency=5, metadata_concurrency=10):
     prog = Progress(asin=asin, plain=plain)
@@ -330,11 +341,12 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
                 representations = fetch_representations(session, asin, quality)
             representation = select_representation(asin, representations, quality)
             lyrics_resp = None if isinstance(lyrics_res, Exception) else lyrics_res
-            await process_track(
+            skipped = await process_track(
                 session, meta, representation, output_dir, True, lyrics_resp,
                 on_step=lambda desc: prog.update(desc), wvd_path=wvd_path,
             )
             prog.finish()
+            _note_skipped([skipped])
         else:
             # Album or playlist: a flat set of tracks downloaded up to
             # `concurrency` at once. The aggregate line counts completed tracks;
@@ -349,7 +361,7 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
                 async with sem:
                     slot = prog.track_start(track.title)
                     try:
-                        await fetch_track(
+                        return await fetch_track(
                             session, track, output_dir, quality,
                             on_step=lambda desc: prog.track_step(slot, desc),
                             wvd_path=wvd_path,
@@ -357,8 +369,9 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
                     finally:
                         prog.track_done(slot)
 
-            await asyncio.gather(*(run_track(t) for t in meta.tracks))
+            results = await asyncio.gather(*(run_track(t) for t in meta.tracks))
             prog.finish()
+            _note_skipped(results)
     except Exception:
         prog.abort()
         raise
@@ -418,7 +431,7 @@ async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
             async with sem:
                 slot = prog.track_start(track.title)
                 try:
-                    await fetch_track(
+                    return await fetch_track(
                         session, track, output_dir, quality,
                         on_step=lambda d: prog.track_step(slot, d),
                         wvd_path=wvd_path,
@@ -426,8 +439,9 @@ async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
                 finally:
                     prog.track_done(slot)
 
-        await asyncio.gather(*(run_track(t) for t in tracks))
+        results = await asyncio.gather(*(run_track(t) for t in tracks))
         prog.finish()
+        _note_skipped(results)
     except Exception:
         prog.abort()
         raise

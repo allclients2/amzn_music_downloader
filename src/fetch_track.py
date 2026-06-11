@@ -295,6 +295,9 @@ async def process_track(
     `lyrics_resp` may be pre-fetched (single-track fast path); when None it is
     fetched here in parallel with the download + license. `on_step(desc)` is an
     optional callback invoked at the start of each stage (drives the progress bar).
+
+    Returns True when the track was skipped because an output file already exists
+    (so callers can tally a "N file(s) already exist; skipped." note); otherwise None.
     """
     def step(desc):
         _log.debug(desc)
@@ -324,7 +327,7 @@ async def process_track(
     existing = _existing_download(track_output_dir, output_filename)
     if existing is not None:
         _log.info("file %s already exists (%s); skipping.", output_filename, existing.suffix)
-        return
+        return True
 
     # Per-track temp dir so concurrent downloads don't clobber each other's
     # encrypted/decrypted/remuxed scratch files.
@@ -389,11 +392,15 @@ async def fetch_track(
     on_step=None,
     wvd_path: str = "device.wvd",
 ):
-    """Album/general path: fetch the manifest, select a stream, then process."""
+    """Album/general path: fetch the manifest, select a stream, then process.
+
+    Propagates `process_track`'s return: True if the track already existed and was
+    skipped, else None.
+    """
     if on_step:
         on_step("fetching manifest")
     representation = await asyncio.to_thread(find_representation, session, track.asin, quality)
-    await process_track(
+    return await process_track(
         session, track, representation, output_dir, build_folder_structure,
         on_step=on_step, wvd_path=wvd_path,
     )
