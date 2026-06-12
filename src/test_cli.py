@@ -91,13 +91,13 @@ def _make_track(asin, title, track_number=1, total_tracks=1, disc=1, total_discs
     )
 
 
-def _fake_track_metadata(session, asin):
+def _fake_track_metadata(session, asin, defer_track_cover=False):
     """Return ('track', TrackMetadata) exactly like metadata.fetch_metadata."""
     track = _make_track(asin, "Fake Track Marquee Example Fake Track Marquee Example")
     return "track", track
 
 
-def _fake_album_metadata(session, asin):
+def _fake_album_metadata(session, asin, defer_track_cover=False):
     """Return ('album', AlbumMetadata) exactly like metadata.fetch_metadata."""
     n = len(_ALBUM_TRACKS)
     tracks = [
@@ -120,7 +120,7 @@ def _fake_album_metadata(session, asin):
     return "album", album
 
 
-def _fake_playlist_metadata(session, asin):
+def _fake_playlist_metadata(session, asin, defer_track_cover=False):
     """Return ('playlist', PlaylistMetadata) exactly like metadata.fetch_metadata."""
     n = len(_ALBUM_TRACKS)
     tracks = [
@@ -132,7 +132,7 @@ def _fake_playlist_metadata(session, asin):
     )
 
 
-def _fake_artist_metadata(session, asin):
+def _fake_artist_metadata(session, asin, defer_track_cover=False):
     """Dispatch like metadata.fetch_metadata: the artist ASIN resolves to a list of
     album ASINs, and each of those resolves to a full album (download() recurses)."""
     if asin == _FAKE_ARTIST_ASIN:
@@ -144,7 +144,7 @@ def _fake_artist_metadata(session, asin):
     return _fake_album_metadata(session, asin)
 
 
-def _fake_batch_metadata(session, asin):
+def _fake_batch_metadata(session, asin, defer_track_cover=False):
     """Dispatch a batch file's mixed inputs the way metadata.fetch_metadata would:
     each input id resolves to its own kind (track / album / playlist / artist), and
     the artist's album ASINs resolve to full albums."""
@@ -176,7 +176,8 @@ def _fake_representations(session, asin, quality=None):
 
 async def _fake_process_track(session, track, representation, output_dir,
                               build_folder_structure=True, lyrics_resp=None,
-                              on_step=None, wvd_path="device.wvd"):
+                              on_step=None, wvd_path="device.wvd",
+                              resolve_hi_res_cover=False):
     """Simulate the single-track pipeline, driving the progress bar via on_step."""
     for desc, delay in _FAKE_STEPS:
         if on_step:
@@ -239,7 +240,7 @@ def main_test():
             )) + "\n")
 
     arg = argv[0] if argv else (batch_file or default_asin)
-    sys.argv = ["test_cli.py", arg, "--default-quality", "HD"]
+    sys.argv = ["test_cli.py", arg, "--quality", "HD"]
     try:
         main.main()
     finally:

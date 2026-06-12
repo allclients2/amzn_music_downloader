@@ -107,32 +107,21 @@ def _upgrade_cover(url: Optional[str]) -> Optional[str]:
     return re.sub(r"\._(S[XYL]|U[XY])\d+_", "._SL1200_", url)
 
 
-def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> Optional[str]:
+def _search_cover(
+    session: "AmazonMusicMobileAPI",
+    artist: str,
+    title: str,
+    asins: List[str],
+    fallback: Optional[str],
+) -> Optional[str]:
     """Original full-resolution cover via the search API (`artOriginal.artUrl`).
 
     The muse `image` field is only a 600px asset. The textsearch service exposes
     `artOriginal.artUrl` — the original master art (often 1500-3000px+) — which is
-    what OrpheusDL embeds. Best effort: any failure falls back to the muse image
-    with its size token rewritten upward.
+    what OrpheusDL embeds. Best effort: any failure (or no usable asin) falls back
+    to the supplied `fallback` (the muse image, size token rewritten upward).
     """
-    fallback = _upgrade_cover(album_data.get("image"))
-
-    artist = (
-        album_data.get("primaryArtistName")
-        or (album_data.get("artist") or {}).get("name")
-        or ""
-    )
-    title = album_data.get("title") or ""
-    asins = [
-        a
-        for a in (
-            album_data.get("asin"),
-            album_data.get("globalAsin"),
-            album_data.get("requestedAsin"),
-        )
-        if a
-    ]
-    asins += [t.get("asin") for t in album_data.get("tracks", []) if t.get("asin")]
+    asins = [a for a in asins if a]
     if not asins:
         return fallback
 
@@ -158,6 +147,44 @@ def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> Optional
     # `artOriginal.artUrl` is a bare master URL (no size token) = original
     # resolution, so we return it as-is.
     return str(url) if url else fallback
+
+
+def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> Optional[str]:
+    """Hi-res cover for an album (muse dict) — the shared per-album lookup used by
+    the album branch of `fetch_metadata`."""
+    return _search_cover(
+        session,
+        artist=(
+            album_data.get("primaryArtistName")
+            or (album_data.get("artist") or {}).get("name")
+            or ""
+        ),
+        title=album_data.get("title") or "",
+        asins=[
+            album_data.get("asin"),
+            album_data.get("globalAsin"),
+            album_data.get("requestedAsin"),
+            *(t.get("asin") for t in album_data.get("tracks", [])),
+        ],
+        fallback=_upgrade_cover(album_data.get("image")),
+    )
+
+
+def resolve_track_cover(session: "AmazonMusicMobileAPI", track: "TrackMetadata") -> Optional[str]:
+    """Hi-res cover for a single track, keyed off its `TrackMetadata` fields.
+
+    The single-track fast path defers the cover lookup out of `fetch_metadata`
+    (which returns the muse fallback in `track.cover_url`) so this textsearch can
+    run concurrently with the license + audio download instead of blocking them.
+    Falls back to the muse image already on the track.
+    """
+    return _search_cover(
+        session,
+        artist=track.album_artist or track.artist or "",
+        title=track.album_name or "",
+        asins=[track.album_asin, track.asin],
+        fallback=track.cover_url,
+    )
 
 
 def _composers(track_data: dict) -> Optional[str]:
@@ -231,12 +258,18 @@ def _fetch_tracks(session: AmazonMusicMobileAPI, asins: List[str]) -> dict:
 
 
 def fetch_metadata(
-    session: AmazonMusicMobileAPI, content_asin: str
+    session: AmazonMusicMobileAPI, content_asin: str, defer_track_cover: bool = False
 ) -> Tuple[str, object]:
     """Resolve an ASIN to its kind and metadata:
 
     ('track', TrackMetadata), ('album', AlbumMetadata),
     ('artist', ArtistMetadata), or ('playlist', PlaylistMetadata).
+
+    With `defer_track_cover=True` a single *track* skips the inline hi-res cover
+    textsearch (leaving the muse fallback in `cover_url`); the single-track fast
+    path resolves it concurrently via `resolve_track_cover` so it doesn't block
+    the license. Albums/artists/playlists are unaffected (their cover lookup is a
+    shared per-album call, not on the per-track critical path).
     """
     # Playlists aren't served by the muse lookup endpoint, so a playlist ASIN can
     # make get_metadata error — swallow that and fall through to the playlist path.
@@ -272,7 +305,13 @@ def fetch_metadata(
         album_data = next((a for a in albums_list if a.get("asin") == album_asin), None)
         if not album_data:
             album_data = _fetch_album_data(session, album_asin)
-        cover_url = _hi_res_cover(session, album_data)
+        # Defer the hi-res textsearch to the caller (fast path) when asked, so it
+        # overlaps the download instead of blocking it; else resolve it inline.
+        cover_url = (
+            _upgrade_cover(album_data.get("image"))
+            if defer_track_cover
+            else _hi_res_cover(session, album_data)
+        )
         return "track", _build_track(
             track_data, album_data, _disc_total(album_data), cover_url
         )

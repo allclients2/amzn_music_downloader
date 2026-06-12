@@ -8,9 +8,7 @@ stream carries no container so it can't be tagged. `tag_track` dispatches on the
 track's scratch dir and embedding it alongside the metadata.
 """
 
-import os
 import tempfile
-from contextlib import contextmanager
 
 import requests
 from mutagen.flac import FLAC, Picture
@@ -32,13 +30,15 @@ def _as_int(value) -> int:
         return 0
 
 
-@contextmanager
-def download_temp_artwork(url: str, directory: str):
-    if not url:
-        yield None
-        return
+def download_artwork(url: str, directory: str):
+    """Download the cover JPEG into `directory`, returning its path (or None).
 
-    tmp_path = None
+    Called from `process_track` concurrently with the audio download, so the bytes
+    are already in hand by tagging time. The file lives in the track's scratch dir,
+    which is removed wholesale after the track finishes — no separate cleanup.
+    """
+    if not url:
+        return None
     with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg", dir=directory) as tmp:
         response = requests.get(
             url,
@@ -50,31 +50,26 @@ def download_temp_artwork(url: str, directory: str):
         )
         response.raise_for_status()
         tmp.write(response.content)
-        tmp_path = tmp.name
-
-    try:
-        yield tmp_path
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        return tmp.name
 
 
 def tag_track(media_path: str, track: TrackMetadata, lyrics, temp_dir: str,
-              tag_mode: str = "flac"):
-    """Download the cover into `temp_dir` and embed tags + art (blocking).
+              tag_mode: str = "flac", artwork_path=None):
+    """Embed tags + (already-downloaded) cover art onto the remuxed file (blocking).
 
-    `tag_mode`: "flac"/"opus" (Vorbis comments), "mp4" (MP4 atoms, for the spatial
-    .mp4 output), or None — a raw elementary stream (AC-4 .ac4) that carries no
-    container, so there's nothing to tag."""
+    `artwork_path` is the cover JPEG fetched by `process_track` concurrently with
+    the audio download (None when the track has no cover). `tag_mode`: "flac"/"opus"
+    (Vorbis comments), "mp4" (MP4 atoms, for the spatial .mp4 output), or None — a
+    raw elementary stream (AC-4 .ac4) that carries no container, so there's nothing
+    to tag."""
     if tag_mode is None:
         return
-    with download_temp_artwork(track.cover_url, temp_dir) as artwork_path:
-        if tag_mode == "mp4":
-            embed_metadata_and_cover_mp4(media_path, track, lyrics, artwork_path)
-        elif tag_mode == "opus":
-            embed_metadata_and_cover_opus(media_path, track, lyrics, artwork_path)
-        else:
-            embed_metadata_and_cover(media_path, track, lyrics, artwork_path)
+    if tag_mode == "mp4":
+        embed_metadata_and_cover_mp4(media_path, track, lyrics, artwork_path)
+    elif tag_mode == "opus":
+        embed_metadata_and_cover_opus(media_path, track, lyrics, artwork_path)
+    else:
+        embed_metadata_and_cover(media_path, track, lyrics, artwork_path)
 
 
 def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, artwork_path):

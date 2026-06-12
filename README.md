@@ -45,7 +45,6 @@ You need three things that **cannot** be installed via `pip`:
 | Requirement | What it is | How to get it |
 |---|---|---|
 | **`ffmpeg`** | Remuxes the decrypted stream into a `.flac` container | [ffmpeg.org](https://ffmpeg.org/download.html) — must be on `PATH` |
-| **`mp4decrypt`** | Decrypts the downloaded audio (part of Bento4) | [Bento4 binaries](https://www.bento4.com/downloads/) — must be on `PATH` |
 | **`device.wvd`** | A provisioned **Widevine** device file used for license/decryption | Provide your own; place it in the working directory (gitignored, never in the repo) |
 
 Plus **Python ≥ 3.11** (developed and tested on 3.13).
@@ -145,7 +144,7 @@ be stored side by side.
 
 ```text
 python src/main.py [-h] [--version] [--account ACCOUNT] [--output OUTPUT]
-                   [-v] [--default-quality TIER] [--wvd-path WVD_PATH]
+                   [-v] [--quality TIER] [--wvd-path WVD_PATH]
                    content_asin
 ```
 
@@ -153,7 +152,7 @@ python src/main.py [-h] [--version] [--account ACCOUNT] [--output OUTPUT]
 |---|---|
 | `content_asin` | ASIN of the **track or album** to download (required) |
 | `--output OUTPUT` | Directory to save files into (default: config `default_output`) |
-| `--default-quality TIER` | Quality tier — linear ceiling (`LD`/`SD`/`HD`/`UHD` or a sub-tier) or a spatial tier; see [Quality tiers](#quality-tiers) (default: config `default_quality`) |
+| `--quality TIER` | Quality tier — linear ceiling (`LD`/`SD`/`HD`/`UHD` or a sub-tier) or a spatial tier; see [Quality tiers](#quality-tiers) (default: config `default_quality`) |
 | `--account ACCOUNT` | Which stored account to use — customer id, name, or country code |
 | `--wvd-path WVD_PATH` | Path to the Widevine device file (default: config `default_wvd_path`) |
 | `-v`, `--verbose` | Verbose logging + plain (non-animated) progress output |
@@ -163,13 +162,13 @@ python src/main.py [-h] [--version] [--account ACCOUNT] [--output OUTPUT]
 
 ```bash
 # Download a track or album to ./downloads at HD (CD-quality FLAC)
-python src/main.py B07JZ7PW6F --output downloads --default-quality HD
+python src/main.py B07JZ7PW6F --output downloads --quality HD
 
 # Hi-res download with a specific account, verbose
-python src/main.py B07JZ7PW6F --default-quality UHD --account US -v
+python src/main.py B07JZ7PW6F --quality UHD --account US -v
 
 # Dolby Atmos (spatial) — falls back to the best FLAC if the track has no Atmos
-python src/main.py B07JZ7PW6F --default-quality SPATIAL_ATMOS
+python src/main.py B07JZ7PW6F --quality SPATIAL_ATMOS
 ```
 
 Downloads are **idempotent** — existing output files are skipped, so re-running an
@@ -200,7 +199,7 @@ Account selection precedence when downloading: `--account` → config
 
 ### Quality tiers
 
-`--default-quality` (and config `default_quality`) accepts the full set of tiers the
+`--quality` (and config `default_quality`) accepts the full set of tiers the
 Amazon Music API exposes. There are two kinds.
 
 **Linear ladder** — a **ceiling**: the best available stream **at or below** the tier
@@ -243,7 +242,7 @@ On first run a `config/` folder is generated at the repo root containing:
 - **`credentials.bin`** — pickled per-account credentials (kept in sync with the
   `accounts` table on every login/refresh)
 
-CLI flags (`--output` / `--default-quality` / `--wvd-path`) override the matching
+CLI flags (`--output` / `--quality` / `--wvd-path`) override the matching
 config defaults for a single run; with no flag, the config value is used. Missing
 keys in an existing `config.json` are backfilled automatically.
 
@@ -266,7 +265,7 @@ ASIN to a tagged FLAC runs through a sequence of signed calls:
 | **Metadata** | `muse` (`MusicEnsembleService.lookup`) | ASIN → title, artist, album, **disc/track numbers**, ISRC, release date, label, genre, and more — the rich tags written to each file |
 | **Cover art** | `textsearch` (`artOriginal`) | Fetches the full-resolution master image (≈1500–3000 px) instead of the 600×600 render; one search per album |
 | **Manifest** | `getDashManifestsV2` | Returns a DASH MPD (lossless FLAC); audio is downloaded from its `BaseURL` |
-| **Decryption** | `getLicenseForPlaybackV2` | Drives a `pywidevine` challenge with the web `TRACK_PSSH`; the content key feeds `mp4decrypt`, then `ffmpeg -c copy` remuxes to `.flac` |
+| **Decryption** | `getLicenseForPlaybackV2` | Drives a `pywidevine` challenge with the web `TRACK_PSSH`; the content key feeds the in-process CENC (AES-CTR) decryptor, then `ffmpeg -c copy` remuxes to `.flac` |
 | **Lyrics** | `getLyricsByTrackAsinBatch` | Time-synced lyrics → embedded `LYRICS` tag + sidecar `.lrc` |
 
 The upstream API client is tracked as a **read-only git submodule**; the project's
@@ -281,7 +280,22 @@ with `git submodule update --remote`.
 |---|---|
 | `Widevine device not found` | No `device.wvd` at the expected path — place one in the repo root or pass `--wvd-path`. |
 | `ImportError` for `amazonmusic` | Submodule not fetched — run `git submodule update --init --recursive`. |
-| `mp4decrypt` / `ffmpeg` not found | Not on `PATH` — install them and reopen your shell. |
+| `ffmpeg` not found | Not on `PATH` — install it and reopen your shell. |
 | Imports fail when running the script | You ran it from somewhere other than the repo root — `cd` to the repo root and run `python src/main.py …`. |
 
 For a full traceback on unexpected errors, re-run with `-v`.
+
+---
+
+## Special thanks to
+
+- **[orpheusdl-amazonmusic](https://github.com/bascurtiz/orpheusdl-amazonmusic)** by
+  **bascurtiz** — the Amazon Music mobile API client this project is built on, vendored as
+  the `src/amazonmusic/` git submodule (RSA request signing, device registration, the
+  multi-region endpoints).
+- **[ffmpeg](https://ffmpeg.org/)** — stream-copies every decrypted track into its native
+  container.
+- **[gamdl](https://github.com/glomatico/gamdl)** — inspiration for the whole project, and
+  the design reference for restoring a protected sample entry (the `frma`/`sinf` strip) that
+  let us drop the external `mp4decrypt` dependency.
+- **Amazon** — for using a **secure** DRM.

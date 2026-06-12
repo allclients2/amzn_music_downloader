@@ -53,7 +53,7 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
         # if the ASIN is a track or album). For an album ASIN the speculative
         # manifest/lyrics simply error and are ignored.
         meta_res, reps_res, lyrics_res = await asyncio.gather(
-            asyncio.to_thread(fetch_metadata, session, asin),
+            asyncio.to_thread(fetch_metadata, session, asin, defer_track_cover=True),
             asyncio.to_thread(fetch_representations, session, asin, quality),
             asyncio.to_thread(session.get_track_lyrics, asin),
             return_exceptions=True,
@@ -85,6 +85,7 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             skipped = await process_track(
                 session, meta, representation, output_dir, True, lyrics_resp,
                 on_step=lambda desc: prog.update(desc), wvd_path=wvd_path,
+                resolve_hi_res_cover=True,
             )
             prog.finish()
             _note_skipped([skipped])
