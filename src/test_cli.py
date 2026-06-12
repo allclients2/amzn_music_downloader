@@ -24,7 +24,8 @@ import sys
 import tempfile
 
 import main
-from metadata import AlbumMetadata, ArtistMetadata, PlaylistMetadata, TrackMetadata
+from process import download
+from metadata.metadata import AlbumMetadata, ArtistMetadata, PlaylistMetadata, TrackMetadata
 
 # Made-up ASINs; nothing is ever sent anywhere.
 _FAKE_TRACK_ASIN = "B0FAKETRACK"
@@ -214,13 +215,14 @@ def main_test():
     else:
         default_asin, fake_metadata = _FAKE_TRACK_ASIN, _fake_track_metadata
 
-    # Patch every network/IO boundary on the `main` module namespace so the real
-    # download()/_download_batch() orchestration and Progress rendering run for real.
+    # Patch every network/IO boundary so the real download()/download_batch()
+    # orchestration and Progress rendering run for real. Auth is resolved in `main`
+    # (run_download); the metadata/manifest/track boundaries live in `download`.
     main.auth.get_session = lambda *a, **k: FakeSession()
-    main.fetch_metadata = fake_metadata
-    main.fetch_representations = _fake_representations
-    main.process_track = _fake_process_track
-    main.fetch_track = _fake_fetch_track
+    download.fetch_metadata = fake_metadata
+    download.fetch_representations = _fake_representations
+    download.process_track = _fake_process_track
+    download.fetch_track = _fake_fetch_track
 
     # The batch path needs a real text file of mixed inputs so links.resolve_inputs
     # reads it and run_download routes to the two-phase batch bar.

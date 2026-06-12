@@ -16,9 +16,10 @@ import os
 import pickle
 from pathlib import Path
 
-import config
-import ui
-from amzn_api import AmazonMusicMobileAPI
+from auth import config
+from auth.amzn_api import AmazonMusicMobileAPI
+from cli import prompts
+from cli import ui
 from amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
     AmazonRegion,
@@ -128,9 +129,9 @@ def _cli_oauth_callback(oauth_url: str, application_name: str, country: str) -> 
     Amazon hands out a sign-in URL; the user signs in, lands on a blank/"not
     found" page, and pastes that final URL back here so the auth code can be
     extracted. For JP this is invoked twice (Prime Video first, then Music); each
-    call renders its own self-contained screen via `ui.prompt_oauth_url`.
+    call renders its own self-contained screen via `prompts.prompt_oauth_url`.
     """
-    return ui.prompt_oauth_url(f"{application_name} ({country})", oauth_url)
+    return prompts.prompt_oauth_url(f"{application_name} ({country})", oauth_url)
 
 
 def login(country: str) -> AmazonMusicMobileAPI:
@@ -157,7 +158,14 @@ def login(country: str) -> AmazonMusicMobileAPI:
 
 
 def _prompt_country() -> str:
-    return ui.prompt_region().upper()
+    return prompts.prompt_region().upper()
+
+
+def _name_region(info: dict) -> tuple[str, str]:
+    """The display `(name, region)` for a config/account-info dict, with fallbacks."""
+    name = info.get("name") or "Unknown"
+    region = info.get("region") or info.get("country") or "?"
+    return name, region
 
 
 def _resolve_account_id(store: dict, account: str | None) -> str | None:
@@ -205,8 +213,7 @@ def _account_label(account_id: str, store: dict, accounts: dict | None = None) -
     """A short human label for an account id, for menus and error messages."""
     accounts = config.load_accounts() if accounts is None else accounts
     info = accounts.get(account_id) or _account_info(store[account_id])
-    name = info.get("name") or "Unknown"
-    region = info.get("region") or info.get("country") or "?"
+    name, region = _name_region(info)
     return f"{name} — {region} [{account_id}]"
 
 
@@ -218,16 +225,10 @@ def _select_credentials(store: dict, account: str | None, country: str | None):
         return None
 
     if account:
-        key = account.strip()
-        if key in store:  # exact customer_id
-            return store[key]
-        # Otherwise match by account name (case-insensitive) or country code.
-        accounts = config.load_accounts()
-        for account_id, creds in store.items():
-            info = accounts.get(account_id) or _account_info(creds)
-            if ((info.get("name") or "").lower() == key.lower()
-                    or (info.get("country") or "").upper() == key.upper()):
-                return creds
+        # Match by exact customer_id, account name (case-insensitive), or country.
+        account_id = _resolve_account_id(store, account)
+        if account_id is not None:
+            return store[account_id]
         labels = ", ".join(_account_label(a, store) for a in store)
         raise RuntimeError(
             f"No stored account matching '{account}'. Stored accounts: {labels}. "
@@ -256,13 +257,11 @@ def _prompt_account(store: dict) -> str | None:
     account id, or None to sign in to a brand-new account."""
     accounts = config.load_accounts()
     ids = list(store.keys())
-    options = []
-    for account_id in ids:
-        info = accounts.get(account_id) or _account_info(store[account_id])
-        name = info.get("name") or "Unknown"
-        region = info.get("region") or info.get("country") or "?"
-        options.append((name, region))
-    index = ui.prompt_account(options)
+    options = [
+        _name_region(accounts.get(account_id) or _account_info(store[account_id]))
+        for account_id in ids
+    ]
+    index = prompts.prompt_account(options)
     return None if index is None else ids[index]
 
 

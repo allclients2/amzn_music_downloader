@@ -2,11 +2,16 @@ import shutil
 import sys
 import threading
 import time
-import unicodedata
 
-import ui
-from ui import paint as _paint
-from ui import FAINT as _FAINT, GREY as _GREY, YELLOW as _YELLOW, GREEN as _GREEN
+from cli import ui
+from cli.ui import paint as _paint
+from cli.ui import FAINT as _FAINT, GREY as _GREY, YELLOW as _YELLOW, GREEN as _GREEN
+from util import (
+    disp_width as _disp_width,
+    fixed as _fixed,
+    take_cols as _take_cols,
+    truncate as _truncate,
+)
 
 # ── ANSI styling ────────────────────────────────────────────────────────────
 # The palette, brand, separator, and shared tree markers live in `ui` (one source
@@ -53,50 +58,6 @@ _SLOT_DESC_W = 18     # step description in a slot line
 # the ticker thread redraws to animate it.
 _MARQUEE_CPS = 6
 _TICK_INTERVAL = 0.12
-
-
-def _char_width(c: str) -> int:
-    return 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
-
-
-def _disp_width(s: str) -> int:
-    """Display width, counting CJK/full-width characters as 2 columns."""
-    return sum(_char_width(c) for c in s)
-
-
-def _take_cols(s: str, max_width: int) -> str:
-    """Leading slice of `s` that fits in `max_width` columns (no ellipsis)."""
-    if max_width <= 0:
-        return ""
-    out, width = "", 0
-    for c in s:
-        cw = _char_width(c)
-        if width + cw > max_width:
-            break
-        out += c
-        width += cw
-    return out
-
-
-def _truncate(s: str, max_width: int) -> str:
-    if max_width <= 0:
-        return ""
-    if _disp_width(s) <= max_width:
-        return s
-    out, width = "", 0
-    for c in s:
-        cw = _char_width(c)
-        if width + cw > max_width - 1:
-            break
-        out += c
-        width += cw
-    return out + "…"
-
-
-def _fixed(s: str, width: int) -> str:
-    """Truncate `s` to `width` columns, then pad with spaces to exactly `width`."""
-    t = _truncate(s, width)
-    return t + " " * (width - _disp_width(t))
 
 
 def _fmt_time(seconds: float) -> str:
