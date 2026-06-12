@@ -142,7 +142,7 @@ class Progress:
         self.track_total = 0
         self.album_start = None
         self._agg_reserve = 0
-        self._rate_label = "tracks/s"   # aggregate rate unit (see begin_album)
+        self._rate_label = "tracks/s"
 
         # `plain` (e.g. verbose mode) disables the in-place redraw so log output
         # doesn't fight the bar.
@@ -180,7 +180,7 @@ class Progress:
         self.render()
 
     # ── public API: album ───────────────────────────────────────────────────
-    def begin_album(self, total: int, rate_label: str = "tracks/s"):
+    def begin_custom(self, total: int, rate_label: str = "tracks/s"):
         """(Re)start the multi-item aggregate layout. `rate_label` names the unit of
         the aggregate's per-second rate — "tracks/s" for a track download, "albums/s"
         for the artist's up-front album-metadata phase. Calling it again switches

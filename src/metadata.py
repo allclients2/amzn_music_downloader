@@ -9,7 +9,9 @@ separately through `textsearch` (`artOriginal.artUrl`).
 
 Artists and playlists are resolved purely through submodule endpoints (no catalog
 search): an artist's discography is harvested from its `get_page("artist/<asin>")`
-catalog page, and a playlist's members from `get_catalog_playlist`.
+catalog page, a catalog playlist's members from `get_catalog_playlist`, and a
+user/library playlist's members from `get_user_playlist` (a 10-char id is a catalog
+ASIN, a longer id — uuid / library id — is a user playlist).
 """
 
 import json
@@ -278,8 +280,16 @@ def fetch_metadata(
     album_data = album_match or (albums_list[0] if albums_list else None)
     if not album_data:
         # Not a track/album/artist — the only remaining content the pipeline can
-        # resolve is a (catalog) playlist, served by a different endpoint.
-        playlist = _try_fetch_playlist(session, content_asin)
+        # resolve is a playlist, served by a different endpoint. A 10-char id is a
+        # catalog-playlist ASIN; a longer id (uuid / library id) is a user playlist
+        # (mirrors the submodule's `len == 10` discriminator). Try the likely
+        # endpoint first, then the other, so either link shape resolves.
+        if len(str(content_asin)) == 10:
+            playlist = (_try_fetch_playlist(session, content_asin)
+                        or _try_fetch_user_playlist(session, content_asin))
+        else:
+            playlist = (_try_fetch_user_playlist(session, content_asin)
+                        or _try_fetch_playlist(session, content_asin))
         if playlist is not None:
             return "playlist", playlist
         raise ValueError(
@@ -446,20 +456,14 @@ def _build_tracks_from_asins(
     return tracks
 
 
-def _try_fetch_playlist(
-    session: AmazonMusicMobileAPI, playlist_asin: str
+def _playlist_from_data(
+    session: AmazonMusicMobileAPI, p_data: dict, playlist_id: str
 ) -> Optional[PlaylistMetadata]:
-    """Resolve a catalog-playlist ASIN to a `PlaylistMetadata`, or None if the ASIN
-    isn't a playlist (so the caller can raise a single combined error)."""
-    try:
-        catalog = session.get_catalog_playlist(playlist_asin)
-    except Exception:
-        return None
-    if not isinstance(catalog, dict):
-        return None
-    p_data = catalog.get("playlist")
+    """Build a `PlaylistMetadata` from a playlist payload (catalog or user), or None
+    if it carries no resolvable tracks. Both endpoints model a playlist as a dict
+    with a `tracks` list and a `metadata.title`, so they share this builder."""
     if not isinstance(p_data, dict):
-        p_data = catalog
+        return None
     raw_tracks = p_data.get("tracks") or []
     track_asins = [a for a in (_playlist_track_asin(t) for t in raw_tracks) if a]
     if not track_asins:
@@ -474,4 +478,40 @@ def _try_fetch_playlist(
         or p_data.get("name")
         or "Unknown Playlist"
     )
-    return PlaylistMetadata(name=str(name), asin=str(playlist_asin), tracks=tracks)
+    return PlaylistMetadata(name=str(name), asin=str(playlist_id), tracks=tracks)
+
+
+def _try_fetch_playlist(
+    session: AmazonMusicMobileAPI, playlist_asin: str
+) -> Optional[PlaylistMetadata]:
+    """Resolve a catalog-playlist ASIN to a `PlaylistMetadata`, or None if the ASIN
+    isn't a catalog playlist (so the caller can fall back / raise a combined error)."""
+    try:
+        catalog = session.get_catalog_playlist(playlist_asin)
+    except Exception:
+        return None
+    if not isinstance(catalog, dict):
+        return None
+    p_data = catalog.get("playlist")
+    if not isinstance(p_data, dict):
+        p_data = catalog
+    return _playlist_from_data(session, p_data, playlist_asin)
+
+
+def _try_fetch_user_playlist(
+    session: AmazonMusicMobileAPI, playlist_id: str
+) -> Optional[PlaylistMetadata]:
+    """Resolve a user/library-playlist id (a uuid or library id from a
+    `my/playlists/<id>` or `user-playlists/<id>` link) to a `PlaylistMetadata`, or
+    None if it isn't a user playlist. Served by `getPlaylistsByIdV2`, which returns
+    its playlist(s) under a `playlists` list rather than catalog's `playlist`."""
+    try:
+        resp = session.get_user_playlist(playlist_id)
+    except Exception:
+        return None
+    if not isinstance(resp, dict):
+        return None
+    playlists = resp.get("playlists") or []
+    if not playlists:
+        return None
+    return _playlist_from_data(session, playlists[0], playlist_id)

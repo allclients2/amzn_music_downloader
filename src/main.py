@@ -5,6 +5,7 @@ from pathlib import Path
 
 import auth
 import config
+import links
 import ui
 from fetch_track import fetch_track, process_track, purge_temp_dir
 from metadata import fetch_metadata
@@ -65,7 +66,10 @@ def parse_args(argv=None):
 
     parser.add_argument(
         "content_asin",
-        help="ASIN of the track, album, artist, or playlist to download",
+        metavar="INPUT",
+        help="What to download: an ASIN, an Amazon Music link, or a path to a text "
+             "file of ASINs/links (one per line). Resolves a track, album, artist, "
+             "or playlist (catalog or user). A link's `trackAsin=` selects one track",
     )
     parser.add_argument(
         "--version",
@@ -161,6 +165,17 @@ async def run_download(args):
     concurrency = settings["default_concurrency"]
     metadata_concurrency = args.metadata_concurrency or settings["default_metadata_concurrency"]
 
+    # Resolve the argument to one or more content ids: a bare ASIN, an Amazon Music
+    # link (ASIN extracted), or a text file of either (one per line).
+    try:
+        asins = links.resolve_inputs(args.content_asin)
+    except (ValueError, OSError) as exc:
+        ui.print_error(f"Could not parse input: {exc}")
+        sys.exit(1)
+    if not asins:
+        ui.print_error("No ASINs or links found in input")
+        sys.exit(1)
+
     # Fail fast with a friendly screen when the Widevine device file is missing:
     # decryption can't proceed without it, so don't prompt for an account or start
     # the download bar first.
@@ -173,9 +188,18 @@ async def run_download(args):
     # several stored accounts (id / name / country); omitted uses the default/sole one.
     session = auth.get_session(account=args.account)
 
-    await download(session, args.content_asin, output_dir, quality, wvd_path,
-                   plain=args.verbose, concurrency=concurrency,
-                   metadata_concurrency=metadata_concurrency)
+    # A text file of inputs gets the artist-style two-phase batch bar (resolve every
+    # input's tracks, then download them all as one set). A bare ASIN/link keeps the
+    # single-item path (errors surface as the Error screen via main()).
+    source = links.input_file_label(args.content_asin)
+    if source is not None:
+        await _download_batch(session, source, asins, output_dir, quality, wvd_path,
+                              plain=args.verbose, concurrency=concurrency,
+                              metadata_concurrency=metadata_concurrency)
+    else:
+        await download(session, asins[0], output_dir, quality, wvd_path,
+                       plain=args.verbose, concurrency=concurrency,
+                       metadata_concurrency=metadata_concurrency)
 
 
 def _account_options():
@@ -354,22 +378,10 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             # playlist's tracks keep their own album tags, so each still lands
             # under `<album_artist>/<album>/`.
             prog.set_name(meta.album_name if kind == "album" else meta.name)
-            prog.begin_album(len(meta.tracks))
-            sem = asyncio.Semaphore(concurrency)
-
-            async def run_track(track):
-                async with sem:
-                    slot = prog.track_start(track.title)
-                    try:
-                        return await fetch_track(
-                            session, track, output_dir, quality,
-                            on_step=lambda desc: prog.track_step(slot, desc),
-                            wvd_path=wvd_path,
-                        )
-                    finally:
-                        prog.track_done(slot)
-
-            results = await asyncio.gather(*(run_track(t) for t in meta.tracks))
+            prog.begin_custom(len(meta.tracks))
+            results = await _run_tracks(
+                prog, session, meta.tracks, output_dir, quality, wvd_path, concurrency
+            )
             prog.finish()
             _note_skipped(results)
     except Exception:
@@ -377,6 +389,75 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
         raise
     finally:
         purge_temp_dir(output_dir)
+
+
+async def _run_tracks(prog, session, tracks, output_dir, quality, wvd_path, concurrency):
+    """Download a flat list of tracks under the multi-slot track view, up to
+    `concurrency` at once. The caller has already switched the bar to the track
+    phase via `prog.begin_custom(len(tracks), ...)`. Returns the per-track results
+    (True = the output already existed and was skipped)."""
+    sem = asyncio.Semaphore(concurrency)
+
+    async def run_track(track):
+        async with sem:
+            slot = prog.track_start(track.title)
+            try:
+                return await fetch_track(
+                    session, track, output_dir, quality,
+                    on_step=lambda desc: prog.track_step(slot, desc),
+                    wvd_path=wvd_path,
+                )
+            finally:
+                prog.track_done(slot)
+
+    return await asyncio.gather(*(run_track(t) for t in tracks))
+
+
+async def _artist_tracks(session, artist, metadata_concurrency, on_album=None):
+    """Fetch every album's tracks for an artist, `metadata_concurrency` at a time,
+    flattened into one track list (album order preserved). A failed album metadata
+    lookup is skipped so the rest of the discography still downloads. `on_album`, if
+    given, is called once per album as its metadata resolves (drives an aggregate
+    progress bar)."""
+    sem = asyncio.Semaphore(max(1, metadata_concurrency))
+    metas = []
+
+    async def fetch_one(album_asin):
+        async with sem:
+            try:
+                kind, meta = await asyncio.to_thread(fetch_metadata, session, album_asin)
+                if kind == "album" and getattr(meta, "tracks", None):
+                    metas.append(meta)
+            except Exception:
+                pass  # one bad album shouldn't sink the discography
+            finally:
+                if on_album:
+                    on_album()
+
+    await asyncio.gather(*(fetch_one(a) for a in artist.album_asins))
+    return [track for meta in metas for track in meta.tracks]
+
+
+async def _resolve_to_tracks(session, asin, metadata_concurrency):
+    """Resolve one input id to a flat list of tracks, expanding albums/playlists to
+    their members and an artist to its whole discography. Raises if the id doesn't
+    resolve, so the batch caller can record it as a failed input."""
+    kind, meta = await asyncio.to_thread(fetch_metadata, session, asin)
+    if kind == "track":
+        return [meta]
+    if kind in ("album", "playlist"):
+        return list(meta.tracks)
+    if kind == "artist":
+        return await _artist_tracks(session, meta, metadata_concurrency)
+    return []
+
+
+def _report_failures(failures, total):
+    """Emit a "N of M input(s) failed:" summary when any batch input failed."""
+    if failures:
+        ui.note(f"{len(failures)} of {total} input(s) failed:")
+        for asin, err in failures:
+            ui.note(f"  {asin}: {err}")
 
 
 async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
@@ -399,49 +480,79 @@ async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
     prog.set_name(artist.name)
     try:
         # ── Phase 1: fetch all album metadata (albums/s) ──────────────────────
-        prog.begin_album(len(albums), rate_label="albums/s")
-        meta_sem = asyncio.Semaphore(max(1, metadata_concurrency))
-        metas = []
-
-        async def fetch_one(album_asin):
-            async with meta_sem:
-                try:
-                    kind, meta = await asyncio.to_thread(fetch_metadata, session, album_asin)
-                    if kind == "album" and getattr(meta, "tracks", None):
-                        metas.append(meta)
-                except Exception:
-                    pass  # one bad album shouldn't sink the discography
-                finally:
-                    prog.advance_aggregate()
-
-        await asyncio.gather(*(fetch_one(a) for a in albums))
-
-        # Flatten the discography into a single track list.
-        tracks = [track for meta in metas for track in meta.tracks]
+        prog.begin_custom(len(albums), rate_label="albums/s")
+        tracks = await _artist_tracks(
+            session, artist, metadata_concurrency, on_album=prog.advance_aggregate
+        )
         if not tracks:
             prog.abort()
             ui.note(f"No downloadable tracks found for artist '{artist.name}'.")
             return
 
         # ── Phase 2: download every track (tracks/s) ──────────────────────────
-        prog.begin_album(len(tracks), rate_label="tracks/s")
-        sem = asyncio.Semaphore(concurrency)
-
-        async def run_track(track):
-            async with sem:
-                slot = prog.track_start(track.title)
-                try:
-                    return await fetch_track(
-                        session, track, output_dir, quality,
-                        on_step=lambda d: prog.track_step(slot, d),
-                        wvd_path=wvd_path,
-                    )
-                finally:
-                    prog.track_done(slot)
-
-        results = await asyncio.gather(*(run_track(t) for t in tracks))
+        prog.begin_custom(len(tracks), rate_label="tracks/s")
+        results = await _run_tracks(
+            prog, session, tracks, output_dir, quality, wvd_path, concurrency
+        )
         prog.finish()
         _note_skipped(results)
+    except Exception:
+        prog.abort()
+        raise
+    finally:
+        purge_temp_dir(output_dir)
+
+
+async def _download_batch(session, source_label, asins, output_dir, quality, wvd_path,
+                          plain, concurrency, metadata_concurrency):
+    """Download a text-file batch of inputs in two phases under one progress bar,
+    mirroring the artist layout:
+
+    1. Resolve every input to its tracks — a single aggregate bar counting inputs
+       (input/s). Albums/playlists expand to their members and an artist to its whole
+       discography; each input still counts as one toward the aggregate.
+    2. Flatten every input's tracks into one list and download them like a big album —
+       the multi-slot track view (tracks/s), `concurrency` tracks at a time.
+
+    A failed input is skipped (collected and summarised at the end) so one bad entry
+    doesn't sink the rest of the batch."""
+    prog = Progress(asin=source_label, plain=plain)
+    failures = []
+    try:
+        # ── Phase 1: resolve every input to its tracks (input/s) ──────────────
+        prog.begin_custom(len(asins), rate_label="input/s")
+        sem = asyncio.Semaphore(max(1, metadata_concurrency))
+        per_input = [None] * len(asins)
+
+        async def resolve_one(idx, asin):
+            async with sem:
+                try:
+                    per_input[idx] = await _resolve_to_tracks(
+                        session, asin, metadata_concurrency
+                    )
+                except Exception as exc:
+                    failures.append((asin, str(exc) or type(exc).__name__))
+                finally:
+                    prog.advance_aggregate()
+
+        await asyncio.gather(*(resolve_one(i, a) for i, a in enumerate(asins)))
+
+        # Flatten the inputs into one track list, preserving input order.
+        tracks = [track for group in per_input if group for track in group]
+        if not tracks:
+            prog.abort()
+            ui.note("No downloadable tracks found in input.")
+            _report_failures(failures, len(asins))
+            return
+
+        # ── Phase 2: download every track (tracks/s) ──────────────────────────
+        prog.begin_custom(len(tracks), rate_label="tracks/s")
+        results = await _run_tracks(
+            prog, session, tracks, output_dir, quality, wvd_path, concurrency
+        )
+        prog.finish()
+        _note_skipped(results)
+        _report_failures(failures, len(asins))
     except Exception:
         prog.abort()
         raise

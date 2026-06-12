@@ -6,19 +6,22 @@ pipeline are all replaced with fakes. The simulated work walks through the same
 step descriptions the real code emits, with short sleeps so the progress bar
 animates the way it would for a genuine fetch.
 
-Four modes, matching the branches of `main.download()`:
+Five modes, matching the branches of `main.run_download()`:
 
     python src/test_cli.py              # single track (default)
     python src/test_cli.py --album      # multi-track album
     python src/test_cli.py --playlist   # playlist (flat set of tracks)
     python src/test_cli.py --artist     # artist (sequence of albums)
+    python src/test_cli.py --batch      # text file of mixed inputs (two-phase bar)
     python src/test_cli.py B07JZ7PW6F   # single track, your own ASIN
     python src/test_cli.py --album B07X # album, your own ASIN
 """
 
 import asyncio
+import os
 import random
 import sys
+import tempfile
 
 import main
 from metadata import AlbumMetadata, ArtistMetadata, PlaylistMetadata, TrackMetadata
@@ -140,6 +143,19 @@ def _fake_artist_metadata(session, asin):
     return _fake_album_metadata(session, asin)
 
 
+def _fake_batch_metadata(session, asin):
+    """Dispatch a batch file's mixed inputs the way metadata.fetch_metadata would:
+    each input id resolves to its own kind (track / album / playlist / artist), and
+    the artist's album ASINs resolve to full albums."""
+    if asin == _FAKE_ARTIST_ASIN:
+        return _fake_artist_metadata(session, asin)
+    if asin == _FAKE_PLAYLIST_ASIN:
+        return _fake_playlist_metadata(session, asin)
+    if asin == _FAKE_TRACK_ASIN:
+        return _fake_track_metadata(session, asin)
+    return _fake_album_metadata(session, asin)
+
+
 def _fake_representations(session, asin, quality=None):
     """Return a parsed-manifest-shaped list (matches mpd_info.parse_mpd output)."""
     return [
@@ -184,9 +200,12 @@ def main_test():
     album = "--album" in argv
     playlist = "--playlist" in argv
     artist = "--artist" in argv
-    argv = [a for a in argv if a not in ("--album", "--playlist", "--artist")]
+    batch = "--batch" in argv
+    argv = [a for a in argv if a not in ("--album", "--playlist", "--artist", "--batch")]
 
-    if artist:
+    if batch:
+        default_asin, fake_metadata = None, _fake_batch_metadata
+    elif artist:
         default_asin, fake_metadata = _FAKE_ARTIST_ASIN, _fake_artist_metadata
     elif playlist:
         default_asin, fake_metadata = _FAKE_PLAYLIST_ASIN, _fake_playlist_metadata
@@ -194,18 +213,36 @@ def main_test():
         default_asin, fake_metadata = _FAKE_ALBUM_ASIN, _fake_album_metadata
     else:
         default_asin, fake_metadata = _FAKE_TRACK_ASIN, _fake_track_metadata
-    asin = argv[0] if argv else default_asin
 
     # Patch every network/IO boundary on the `main` module namespace so the real
-    # download() orchestration and Progress rendering run for real, unmocked.
+    # download()/_download_batch() orchestration and Progress rendering run for real.
     main.auth.get_session = lambda *a, **k: FakeSession()
     main.fetch_metadata = fake_metadata
     main.fetch_representations = _fake_representations
     main.process_track = _fake_process_track
     main.fetch_track = _fake_fetch_track
 
-    sys.argv = ["test_cli.py", asin, "--default-quality", "HD"]
-    main.main()
+    # The batch path needs a real text file of mixed inputs so links.resolve_inputs
+    # reads it and run_download routes to the two-phase batch bar.
+    batch_file = None
+    if batch:
+        fd, batch_file = tempfile.mkstemp(prefix="batch-", suffix=".txt")
+        with os.fdopen(fd, "w") as f:
+            f.write("\n".join((
+                "# fake batch of mixed inputs",
+                _FAKE_TRACK_ASIN,
+                _FAKE_ALBUM_ASIN,
+                _FAKE_PLAYLIST_ASIN,
+                _FAKE_ARTIST_ASIN,
+            )) + "\n")
+
+    arg = argv[0] if argv else (batch_file or default_asin)
+    sys.argv = ["test_cli.py", arg, "--default-quality", "HD"]
+    try:
+        main.main()
+    finally:
+        if batch_file:
+            os.remove(batch_file)
 
 
 if __name__ == "__main__":
