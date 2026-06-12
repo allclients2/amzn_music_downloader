@@ -34,7 +34,7 @@ def _add_download_args(parser):
         help="Enable verbose logging",
     )
     parser.add_argument(
-        "--default-quality",
+        "--quality",
         default=None,
         metavar="TIER",
         help="Quality tier: a linear ceiling (LD/SD/HD/UHD or a sub-tier like "
@@ -110,7 +110,7 @@ async def run_search(args):
     ui.setup_logging(args.verbose)
 
     settings = config.get_settings()
-    quality = args.default_quality or settings["default_quality"]
+    quality = args.quality or settings["default_quality"]
     wvd_path = args.wvd_path or settings["default_wvd_path"]
     output_dir = Path(args.output or settings["default_output"])
     concurrency = settings["default_concurrency"]
@@ -157,7 +157,7 @@ async def run_download(args):
 
     # CLI flags override the stored config defaults (generated on first run).
     settings = config.get_settings()
-    quality = args.default_quality or settings["default_quality"]
+    quality = args.quality or settings["default_quality"]
     wvd_path = args.wvd_path or settings["default_wvd_path"]
     output_dir = Path(args.output or settings["default_output"])
     concurrency = settings["default_concurrency"]

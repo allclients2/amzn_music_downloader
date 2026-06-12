@@ -3,7 +3,7 @@
 Builds a `pywidevine` license challenge from a provisioned Widevine device file,
 exchanges it through the signed `getLicenseForPlaybackV2` endpoint
 (`AmazonMusicMobileAPI.get_license_response()`), and returns the decrypted content
-key as a `kid:key` string for `mp4decrypt`.
+key as a `kid:key` string for the in-process CENC decryptor (`process.decrypt`).
 """
 
 import base64

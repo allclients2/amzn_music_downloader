@@ -1,8 +1,8 @@
 """Download, decrypt, remux, and tag a single track.
 
 Pipeline: signed manifest -> download encrypted file from BaseURL -> Widevine
-content key (signed license) -> mp4decrypt -> ffmpeg remux -> mutagen tags +
-embedded cover -> sidecar .lrc.
+content key (signed license) -> in-process CENC decrypt (`process.decrypt`) ->
+ffmpeg remux -> mutagen tags + embedded cover -> sidecar .lrc.
 
 Every codec is stream-copied into its natural container (never transcoded), so
 nothing is lost or pointlessly re-encoded: Amazon HD/UHD FLAC → `.flac`, the lossy
@@ -28,9 +28,10 @@ import requests
 _log = logging.getLogger("downloader.track")
 
 from process.keys import Keys
+from process.decrypt import decrypt_mp4
 from process.lyrics import Lyrics
-from process.tagging import tag_track
-from metadata.metadata import TrackMetadata
+from process.tagging import tag_track, download_artwork
+from metadata.metadata import TrackMetadata, resolve_track_cover
 from metadata.mpd_info import find_representation, _AUDIO_EXTENSIONS
 from util import safe_filename, build_output_filename
 
@@ -78,15 +79,23 @@ def purge_temp_dir(output_dir: Path) -> None:
     shutil.rmtree(Path(output_dir) / _TEMP_SUBDIR, ignore_errors=True)
 
 
+# Streaming copy buffer. The audio bodies are ~100 MB (UHD) served as
+# `application/octet-stream` (no transfer decoding), so a large buffer copies them
+# in ~100 raw passes instead of ~12k tiny ones — far less Python/GIL overhead with
+# several downloads streaming through worker threads at once.
+_DOWNLOAD_CHUNK = 1024 * 1024  # 1 MiB
+
+
 def download_full_file(base_url: str, output_path):
     r = requests.get(base_url, stream=True)
     if r.status_code != 200:
         _log.error("download failed. Status code: %s", r.status_code)
         return None
+    # `raw.read` (decode_content=True) hands us the socket buffer directly, skipping
+    # iter_content's per-8 KB Python loop; shutil pumps it in `_DOWNLOAD_CHUNK` blocks.
+    r.raw.decode_content = True
     with open(output_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
+        shutil.copyfileobj(r.raw, f, length=_DOWNLOAD_CHUNK)
     return output_path
 
 
@@ -118,12 +127,17 @@ async def process_track(
     lyrics_resp=None,
     on_step=None,
     wvd_path: str = "device.wvd",
+    resolve_hi_res_cover: bool = False,
 ):
     """Download + decrypt + remux + tag, given an already-selected representation.
 
     `lyrics_resp` may be pre-fetched (single-track fast path); when None it is
-    fetched here in parallel with the download + license. `on_step(desc)` is an
-    optional callback invoked at the start of each stage (drives the progress bar).
+    fetched here in parallel with the download + license. The cover JPEG is always
+    fetched in that same parallel batch (so it's in hand by tagging time);
+    `resolve_hi_res_cover` additionally runs the hi-res `textsearch` there — the
+    single-track fast path defers that lookup out of `fetch_metadata` so it overlaps
+    the download rather than blocking the license. `on_step(desc)` is an optional
+    callback invoked at the start of each stage (drives the progress bar).
 
     Returns True when the track was skipped because an output file already exists
     (so callers can tally a "N file(s) already exist; skipped." note); otherwise None.
@@ -165,32 +179,37 @@ async def process_track(
     temp_dir = Path(tempfile.mkdtemp(prefix="dl-", dir=base_temp))
     encrypted_file = temp_dir / "encrypted.mp4"
 
+    def fetch_cover():
+        # The fast path leaves only the muse fallback on the track; upgrade it to
+        # the hi-res master here (concurrently with the audio download) instead of
+        # blocking the license back in fetch_metadata. Other paths already carry the
+        # shared per-album hi-res URL, so just download the bytes.
+        url = resolve_track_cover(session, track) if resolve_hi_res_cover else track.cover_url
+        return download_artwork(url, str(temp_dir))
+
     step("downloading track")
     coros = [
         asyncio.to_thread(Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path),
         asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
+        asyncio.to_thread(fetch_cover),
     ]
     fetch_lyrics = lyrics_resp is None
     if fetch_lyrics:
         coros.append(asyncio.to_thread(session.get_track_lyrics, track.asin))
     results = await asyncio.gather(*coros)
     content_key = results[0]
+    artwork_path = results[2]
     if fetch_lyrics:
-        lyrics_resp = results[2]
+        lyrics_resp = results[3]
 
     # The decrypt/remux/tag stages are blocking (subprocess + requests + mutagen);
     # run them off the event loop so other concurrent tracks keep making progress.
     step("decrypting")
     decrypted_mp4 = temp_dir / "decrypted_temp.mp4"
     try:
-        await asyncio.to_thread(
-            subprocess.run,
-            ["mp4decrypt", "--key", content_key, str(encrypted_file), str(decrypted_mp4)],
-            check=True,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError:
-        _log.error("decryption failed for %s", track.title)
+        await asyncio.to_thread(decrypt_mp4, encrypted_file, content_key, decrypted_mp4)
+    except Exception:
+        _log.error("decryption failed for %s", track.title, exc_info=True)
         shutil.rmtree(temp_dir, ignore_errors=True)
         return
 
@@ -200,7 +219,9 @@ async def process_track(
 
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
-    await asyncio.to_thread(tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode)
+    await asyncio.to_thread(
+        tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode, artwork_path
+    )
 
     track_output_dir.mkdir(parents=True, exist_ok=True)
     media_temp.rename(output_file)

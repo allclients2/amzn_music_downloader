@@ -18,3 +18,6 @@ __pycache__/
 credentials.bin
 .DS_Store
 test.txt
+flow_meta.py
+flows.csv
+flows.mitm
