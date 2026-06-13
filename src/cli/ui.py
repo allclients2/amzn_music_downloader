@@ -20,6 +20,12 @@ one header replacing the next rather than a growing stack. `progress.py` calls
 the last setup screen. Only our own output is ever cleared; the shell prompt above
 the first screen is left untouched.
 
+Beneath each screen's prompt is a persistent footer (`_footer_rows`) of collected
+messages: sticky `warn`/`error` alerts (yellow/red — never cleared, so they're
+still on screen at exit for diagnosis) over transient `note` lines (faint — each
+survives one screen transition). The root log handler funnels WARNING/ERROR records
+into the same alert footer on interactive runs (see `_BarAwareHandler`).
+
 Color is emitted only to a real terminal: `paint()` returns plain text when stdout
 is not a TTY (piped output), so escape codes never leak into logs.
 """
@@ -109,6 +115,27 @@ def header(*parts: str) -> str:
 # to it as they print; the next screen (or the progress bar) rewinds over it.
 _pending_rows = 0
 
+# ── persistent footer (notes + alerts) ───────────────────────────────────────
+# Below every screen's prompt sits a footer of accumulated messages. It has two
+# regions, sticky alerts first then transient notes:
+#   • _alerts  — (level, text) pairs from `warn`/`error` and the log funnel.
+#     Painted yellow (WARNING) / red (ERROR). NEVER cleared: they stay on screen
+#     through every screen change and remain visible when the program exits, so
+#     the user can diagnose what went wrong.
+#   • notes    — faint incidental lines from `note`. Transient: a note survives
+#     exactly one screen transition (it's shown on the screen drawn right after it
+#     was added, then cleared on the next). Implemented as two lists — a note lands
+#     in `_pending_notes`, is promoted to `_displayed_notes` when the next screen is
+#     drawn, and is dropped when the screen after that is drawn.
+# `_footer_rows` tracks the physical rows the footer currently occupies so it can
+# be rewound independently of the screen body above it. The whole mechanism only
+# engages on a TTY and only when the footer is non-empty: with nothing to show,
+# screens print and read exactly as they did before (no cursor gymnastics).
+_footer_rows = 0
+_alerts: list[tuple[int, str]] = []
+_displayed_notes: list[str] = []
+_pending_notes: list[str] = []
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -126,12 +153,20 @@ def _vis_rows(text: str, term_w: int) -> int:
 
 
 def _erase_pending() -> None:
-    """Rewind to the top of the previously printed screen/notes and clear it."""
-    global _pending_rows
-    if _TTY and _pending_rows:
-        sys.stdout.write(f"\033[{_pending_rows}F\033[J")
+    """Rewind over the previously printed screen *and its footer* and clear it.
+
+    Also advances the transient-notes generation: notes added since the last screen
+    was drawn (`_pending_notes`) become this screen's displayed notes, and the
+    previous screen's displayed notes are dropped — so a note lives for exactly one
+    screen. Sticky alerts are left untouched (they never clear)."""
+    global _pending_rows, _footer_rows, _displayed_notes, _pending_notes
+    total = _pending_rows + _footer_rows
+    if _TTY and total:
+        sys.stdout.write(f"\033[{total}F\033[J")
         sys.stdout.flush()
     _pending_rows = 0
+    _footer_rows = 0
+    _displayed_notes, _pending_notes = _pending_notes, []
 
 
 def _emit(line: str) -> None:
@@ -141,15 +176,81 @@ def _emit(line: str) -> None:
     _pending_rows += _vis_rows(line, _term_cols())
 
 
+# ── footer rendering ──────────────────────────────────────────────────────────
+def _footer_lines() -> list[str]:
+    """The footer as painted lines: sticky alerts (yellow/red) then transient
+    notes (faint), aligned under the alerts' one-char marker."""
+    lines = []
+    for level, text in _alerts:
+        if level >= logging.ERROR:
+            lines.append(f"{paint('×', RED)} {paint(text, RED)}")
+        else:
+            lines.append(f"{paint('⚠', YELLOW)} {paint(text, YELLOW)}")
+    for text in (*_displayed_notes, *_pending_notes):
+        lines.append(f"  {faint(text)}")
+    return lines
+
+
+def _repaint_footer() -> None:
+    """Redraw the footer in place beneath the current screen, assuming the cursor
+    sits just below the previous footer (the bottom of the screen). Used when a
+    `note`/`warn`/`error` arrives *between* prompts (the in-prompt footer is drawn
+    by `_read`). Leaves the cursor below the new footer. No-op off a TTY."""
+    global _footer_rows
+    if not _TTY:
+        return
+    lines = _footer_lines()
+    if _footer_rows:
+        # Rewind to the top of the old footer and clear from there down.
+        sys.stdout.write(f"\033[{_footer_rows}F\033[J")
+    else:
+        # Cursor is on a fresh line below the screen; clear it and anything under.
+        sys.stdout.write("\r\033[J")
+    cols = _term_cols()
+    rows = 0
+    for line in lines:
+        print(line)
+        rows += _vis_rows(line, cols)
+    sys.stdout.flush()
+    _footer_rows = rows
+
+
 def _read(prompt: str, reader=input, echo: bool = True) -> str:
     """Print `prompt`, read a line, and track the rows it occupied. With `echo`
     (the default, for `input`), the typed text stays on the prompt line until the
     trailing newline, so both are counted. With `echo=False` (the `read_long_line`
     paste, which suppresses its echo) only the prompt row is on screen, so only the
-    prompt is counted — counting the unshown input would over-rewind the next erase."""
-    global _pending_rows
+    prompt is counted — counting the unshown input would over-rewind the next erase.
+
+    When the footer is non-empty it is drawn *below* the prompt line: the footer is
+    printed first, the cursor is rewound up to the (still-blank) prompt line for the
+    reader to use, and stepped back below the footer once input is submitted — so the
+    rewind machinery still finds the bottom. (A typed line long enough to wrap would
+    push into the footer; menu picks are short and the long paste suppresses echo.)"""
+    global _pending_rows, _footer_rows
+    cols = _term_cols()
+    lines = _footer_lines()
+    if not (_TTY and lines):
+        # No footer to show — behave exactly as before.
+        result = reader(prompt)
+        _pending_rows += _vis_rows(prompt + result if echo else prompt, cols)
+        return result
+
+    prompt_rows = max(1, _vis_rows(_ANSI_RE.sub("", prompt), cols))
+    n_footer = sum(_vis_rows(line, cols) for line in lines)
+    # Reserve the prompt's rows (blank for now), print the footer beneath them,
+    # then rewind to the top of the prompt so the reader prints/reads there.
+    sys.stdout.write("\n" * prompt_rows)
+    for line in lines:
+        sys.stdout.write(line + "\n")
+    sys.stdout.write(f"\033[{prompt_rows + n_footer}A")
+    sys.stdout.flush()
     result = reader(prompt)
-    _pending_rows += _vis_rows(prompt + result if echo else prompt, _term_cols())
+    # Input's trailing newline left the cursor at the top of the footer; step below.
+    sys.stdout.write(f"\033[{n_footer}B\r")
+    sys.stdout.flush()
+    _pending_rows += _vis_rows(prompt + result if echo else prompt, cols)
+    _footer_rows = n_footer
     return result
 
 
@@ -183,13 +284,20 @@ _log_handler = None
 
 
 class _BarAwareHandler(logging.StreamHandler):
-    """A stderr `StreamHandler` that buffers records while a progress bar owns the
-    screen, flushing them in order once the bar releases it."""
+    """Routes log records into the sticky-alert footer, buffering them while a
+    progress bar owns the screen and flushing once the bar releases it.
+
+    In `footer` mode (the default, interactive runs) a record becomes a footer
+    alert coloured by level — WARNING yellow, ERROR/CRITICAL red — so warnings and
+    errors collect beneath the screen and survive to program exit. In non-footer
+    mode (verbose runs, or piped/non-TTY output) it falls back to a plain stderr
+    `StreamHandler` so the raw chronological log stream is preserved."""
 
     def __init__(self):
         super().__init__()  # default stream: sys.stderr
         self._buffering = False
         self._buffer = []
+        self._footer = False
 
     def emit(self, record):
         # logging calls this under `self.lock`, so the buffer access is serialized
@@ -197,7 +305,14 @@ class _BarAwareHandler(logging.StreamHandler):
         if self._buffering:
             self._buffer.append(record)
             return
-        super().emit(record)
+        self._deliver(record)
+
+    def _deliver(self, record):
+        if self._footer:
+            _record_alert(record.levelno, record.getMessage())
+            _repaint_footer()
+        else:
+            super().emit(record)
 
     def begin_bar(self):
         with self.lock:
@@ -207,8 +322,16 @@ class _BarAwareHandler(logging.StreamHandler):
         with self.lock:
             self._buffering = False
             buffered, self._buffer = self._buffer, []
-            for record in buffered:
-                super().emit(record)
+            if self._footer:
+                # Coalesce the whole buffered batch into one footer repaint so the
+                # alerts land cleanly beneath the finished bar.
+                for record in buffered:
+                    _record_alert(record.levelno, record.getMessage())
+                if buffered:
+                    _repaint_footer()
+            else:
+                for record in buffered:
+                    super().emit(record)
 
 
 def setup_logging(verbose: bool) -> None:
@@ -216,7 +339,8 @@ def setup_logging(verbose: bool) -> None:
 
     All records — the project's `downloader.*` loggers plus any third-party
     (pywidevine/urllib3/asyncio) loggers that propagate to root — flow through one
-    handler that can be told to hold output while the download bar is animating."""
+    handler. On an interactive (non-verbose, TTY) run they collect in the sticky
+    footer; verbose or piped runs stream them to stderr live instead."""
     global _log_handler
     root = logging.getLogger()
     root.setLevel(logging.DEBUG if verbose else logging.WARNING)
@@ -224,6 +348,9 @@ def setup_logging(verbose: bool) -> None:
         _log_handler = _BarAwareHandler()
         _log_handler.setFormatter(logging.Formatter(logging.BASIC_FORMAT))
         root.addHandler(_log_handler)
+    # Funnel into the footer only on an interactive terminal that isn't verbose;
+    # otherwise keep the live stderr stream debuggers/log pipes expect.
+    _log_handler._footer = _TTY and not verbose
 
 
 def begin_bar_logging() -> None:
@@ -238,17 +365,48 @@ def end_bar_logging() -> None:
         _log_handler.end_bar()
 
 
-# ── screens ──────────────────────────────────────────────────────────────────
+# ── footer messages (notes + alerts) ─────────────────────────────────────────
 def note(text: str) -> None:
-    """Print one faint-grey informational line (the default for incidental output).
+    """Add one faint-grey informational line to the footer (incidental output).
 
-    Tracked like a screen line so the next screen / the progress bar overwrites it.
-    """
-    _emit(faint(text))
+    Transient: shown beneath the current and next screen, then cleared. Off a TTY
+    it just prints inline (no footer machinery)."""
+    if not _TTY:
+        print(faint(text))
+        return
+    _pending_notes.append(text)
+    _repaint_footer()
 
 
+def _record_alert(level: int, text: str) -> None:
+    """Append a sticky alert (no repaint). Coloured by `level` when rendered."""
+    _alerts.append((level, text))
+
+
+def warn(text: str) -> None:
+    """Add a sticky yellow warning to the footer. Never cleared; visible at exit."""
+    if not _TTY:
+        print(paint(text, YELLOW))
+        return
+    _record_alert(logging.WARNING, text)
+    _repaint_footer()
+
+
+def error(text: str) -> None:
+    """Add a sticky red error to the footer. Never cleared; visible at exit.
+
+    This is the non-fatal footer accent; `print_error` is the full-screen fatal
+    error rendered just before the program exits."""
+    if not _TTY:
+        print(paint(text, RED))
+        return
+    _record_alert(logging.ERROR, text)
+    _repaint_footer()
+
+
+# ── screens ──────────────────────────────────────────────────────────────────
 def print_error(message: str) -> None:
-    """Render the error screen:
+    """Render the error screen, with any accumulated footer alerts beneath it:
 
         │ downloader vX | Error
         ╰ × <message>
@@ -256,3 +414,4 @@ def print_error(message: str) -> None:
     _erase_pending()
     _emit(header("Error"))
     _emit(f"{MARK_CLOSE} {paint('×', RED)} {message}")
+    _repaint_footer()

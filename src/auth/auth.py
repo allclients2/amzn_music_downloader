@@ -81,7 +81,7 @@ def _load_store() -> dict:
         with open(path, "rb") as fh:
             data = _CompatUnpickler(fh).load()
     except Exception as exc:  # corrupt/unreadable store -> treat as logged out
-        ui.note(f"warning: could not read {path} ({exc}); ignoring.")
+        ui.warn(f"could not read {path} ({exc}); ignoring.")
         return {}
     if not isinstance(data, dict):
         return {}
