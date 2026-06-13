@@ -91,13 +91,13 @@ def _make_track(asin, title, track_number=1, total_tracks=1, disc=1, total_discs
     )
 
 
-def _fake_track_metadata(session, asin, defer_track_cover=False):
+def _fake_track_metadata(session, asin, defer_track_cover=False, type_hint=None):
     """Return ('track', TrackMetadata) exactly like metadata.fetch_metadata."""
     track = _make_track(asin, "Fake Track Marquee Example Fake Track Marquee Example")
     return "track", track
 
 
-def _fake_album_metadata(session, asin, defer_track_cover=False):
+def _fake_album_metadata(session, asin, defer_track_cover=False, type_hint=None):
     """Return ('album', AlbumMetadata) exactly like metadata.fetch_metadata."""
     n = len(_ALBUM_TRACKS)
     tracks = [
@@ -120,7 +120,7 @@ def _fake_album_metadata(session, asin, defer_track_cover=False):
     return "album", album
 
 
-def _fake_playlist_metadata(session, asin, defer_track_cover=False):
+def _fake_playlist_metadata(session, asin, defer_track_cover=False, type_hint=None):
     """Return ('playlist', PlaylistMetadata) exactly like metadata.fetch_metadata."""
     n = len(_ALBUM_TRACKS)
     tracks = [
@@ -132,7 +132,7 @@ def _fake_playlist_metadata(session, asin, defer_track_cover=False):
     )
 
 
-def _fake_artist_metadata(session, asin, defer_track_cover=False):
+def _fake_artist_metadata(session, asin, defer_track_cover=False, type_hint=None):
     """Dispatch like metadata.fetch_metadata: the artist ASIN resolves to a list of
     album ASINs, and each of those resolves to a full album (download() recurses)."""
     if asin == _FAKE_ARTIST_ASIN:
@@ -144,7 +144,7 @@ def _fake_artist_metadata(session, asin, defer_track_cover=False):
     return _fake_album_metadata(session, asin)
 
 
-def _fake_batch_metadata(session, asin, defer_track_cover=False):
+def _fake_batch_metadata(session, asin, defer_track_cover=False, type_hint=None):
     """Dispatch a batch file's mixed inputs the way metadata.fetch_metadata would:
     each input id resolves to its own kind (track / album / playlist / artist), and
     the artist's album ASINs resolve to full albums."""

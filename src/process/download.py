@@ -2,8 +2,12 @@
 
 `download()` resolves one bare ASIN/link's kind (`fetch_metadata`) and routes it:
 
-- **Single track (fast path)**: metadata, manifest, and lyrics all depend only on
-  the ASIN, so they're fetched concurrently before the kind is known.
+- **Single track (fast path)**: the manifest and lyrics are track-only requests, so
+  they're fetched concurrently with metadata *only* when the input is known to be a
+  track up front (a `type_hint`, e.g. a `/tracks/` link or a `track` search pick).
+  Otherwise the kind is resolved from metadata first — the one request valid for any
+  input — and the manifest/lyrics are fetched only once the track kind is confirmed,
+  so they're never fired speculatively against an album/artist/playlist.
 - **Album / playlist**: a flat set of tracks under an `asyncio.Semaphore`.
 - **Artist**: `_download_artist` runs two phases on one bar — fetch every album's
   metadata up front (albums/s), then flatten and download every track (tracks/s).
@@ -24,14 +28,14 @@ from metadata.mpd_info import fetch_representations, select_representation
 
 
 def _note_skipped(results):
-    """Emit a "N file(s) already exist; skipped." note when any track was skipped.
+    """Emit a "N file(s) already existed; skipped." note when any track was skipped.
 
     `results` are the truthy/None values returned by process_track/fetch_track —
     True for a track whose output already existed.
     """
     skipped = sum(1 for r in results if r)
     if skipped:
-        ui.note(f"{skipped} file(s) already exist; skipped.")
+        ui.note(f"{skipped} file(s) already existed; skipped.")
 
 
 def _report_failures(failures, total):
@@ -42,26 +46,49 @@ def _report_failures(failures, total):
             ui.note(f"  {asin}: {err}")
 
 
+async def _fetch_track_streams(session, asin, quality):
+    """Fetch a track's DASH representations and lyrics concurrently — both are
+    track-only requests, so this only runs once the input is known to be a track.
+    Returns `(reps_or_exc, lyrics_or_exc)` (each may be an Exception, handled by the
+    caller)."""
+    return await asyncio.gather(
+        asyncio.to_thread(fetch_representations, session, asin, quality),
+        asyncio.to_thread(session.get_track_lyrics, asin),
+        return_exceptions=True,
+    )
+
+
 async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False,
-                   concurrency=5, metadata_concurrency=10):
+                   concurrency=5, metadata_concurrency=10, type_hint=None):
     prog = Progress(asin=asin, plain=plain)
-    prog.set_desc("fetching metadata, manifest & lyrics")
 
     try:
-        # Single-track fast path: metadata, the DASH manifest, and lyrics all
-        # depend only on the ASIN, so fetch them concurrently (we don't yet know
-        # if the ASIN is a track or album). For an album ASIN the speculative
-        # manifest/lyrics simply error and are ignored.
-        meta_res, reps_res, lyrics_res = await asyncio.gather(
-            asyncio.to_thread(fetch_metadata, session, asin, defer_track_cover=True),
-            asyncio.to_thread(fetch_representations, session, asin, quality),
-            asyncio.to_thread(session.get_track_lyrics, asin),
-            return_exceptions=True,
-        )
-
-        if isinstance(meta_res, Exception):
-            raise meta_res
-        kind, meta = meta_res
+        # The manifest and lyrics are track-only requests, so fire them concurrently
+        # with metadata only when the input is *known* to be a track up front (a
+        # 'track' type_hint — e.g. a /tracks/ or ?trackAsin= link, or a track search
+        # pick); they're then guaranteed valid. For any other input we resolve the
+        # kind from metadata first — the one request valid for every input type — so
+        # the track-only calls are never fired speculatively against an album/
+        # artist/playlist (which would just error and be discarded).
+        track_streams = None  # (reps, lyrics) if prefetched alongside metadata
+        if type_hint == "track":
+            prog.set_desc("fetching metadata, manifest & lyrics")
+            meta_res, track_streams = await asyncio.gather(
+                asyncio.to_thread(
+                    fetch_metadata, session, asin, defer_track_cover=True,
+                    type_hint=type_hint,
+                ),
+                _fetch_track_streams(session, asin, quality),
+            )
+            kind, meta = meta_res
+        else:
+            # A 'playlist'/'user-playlist' hint lets fetch_metadata skip the doomed
+            # muse lookup and hit the right playlist endpoint first.
+            prog.set_desc("fetching metadata")
+            kind, meta = await asyncio.to_thread(
+                fetch_metadata, session, asin, defer_track_cover=True,
+                type_hint=type_hint,
+            )
 
         if kind == "artist":
             # An artist resolves to a list of album ASINs (discovered from its
@@ -76,9 +103,15 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
 
         if kind == "track":
             prog.set_name(meta.title)
+            if track_streams is None:
+                # Kind wasn't known up front, so it wasn't prefetched. Now that the
+                # track kind is confirmed, fetch the manifest + lyrics (concurrently).
+                prog.set_desc("fetching manifest & lyrics")
+                track_streams = await _fetch_track_streams(session, asin, quality)
+            reps_res, lyrics_res = track_streams
             representations = reps_res
             if isinstance(representations, Exception) or not representations:
-                # Speculative manifest failed (rare for a track) — fetch directly.
+                # Manifest fetch failed (rare for a track) — fetch directly.
                 representations = fetch_representations(session, asin, quality)
             representation = select_representation(asin, representations, quality)
             lyrics_resp = None if isinstance(lyrics_res, Exception) else lyrics_res

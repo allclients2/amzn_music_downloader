@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
         "default_concurrency": 5,
         "default_metadata_concurrency": 10,
         "default_search_limit": 8,
+        "use_link_hints": True,
     },
     "accounts": {},
 }
@@ -77,8 +78,17 @@ def load_config() -> dict:
 
     merged = copy.deepcopy(DEFAULT_CONFIG)
     if isinstance(data, dict):
-        if isinstance(data.get("config"), dict):
-            merged["config"].update(data["config"])
+        cfg = data.get("config")
+        if isinstance(cfg, dict):
+            cfg = dict(cfg)
+            # `use_type_hints` was renamed to `use_link_hints` (it now toggles the
+            # region hint too); carry an older file's value over, dropping the stale
+            # key. The renamed key is written out on the next save.
+            if "use_type_hints" in cfg and "use_link_hints" not in cfg:
+                cfg["use_link_hints"] = cfg.pop("use_type_hints")
+            else:
+                cfg.pop("use_type_hints", None)
+            merged["config"].update(cfg)
         if isinstance(data.get("accounts"), dict):
             merged["accounts"] = data["accounts"]
     return merged
@@ -86,7 +96,8 @@ def load_config() -> dict:
 
 def get_settings() -> dict:
     """The `config` sub-table: default_quality / default_output / default_wvd_path /
-    default_account / default_concurrency / default_metadata_concurrency."""
+    default_account / default_concurrency / default_metadata_concurrency /
+    use_link_hints."""
     return load_config()["config"]
 
 

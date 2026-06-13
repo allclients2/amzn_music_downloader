@@ -257,8 +257,26 @@ def _fetch_tracks(session: AmazonMusicMobileAPI, asins: List[str]) -> dict:
     return out
 
 
+def _resolve_playlist(
+    session: AmazonMusicMobileAPI, content_asin: str, prefer_user: bool
+) -> Optional["PlaylistMetadata"]:
+    """Resolve a playlist id to `PlaylistMetadata`, trying the preferred endpoint
+    (catalog vs user/library) first and the other as fallback; None if neither serves
+    it. An id's catalog-vs-user nature is only a heuristic (length) or a link-shape
+    hint, so one of the two calls may be wasted — `prefer_user` orders them to make
+    the wasted one the less likely."""
+    # Imported lazily to avoid an import cycle (playlist imports this module).
+    from metadata.playlist import try_fetch_playlist, try_fetch_user_playlist
+    if prefer_user:
+        return (try_fetch_user_playlist(session, content_asin)
+                or try_fetch_playlist(session, content_asin))
+    return (try_fetch_playlist(session, content_asin)
+            or try_fetch_user_playlist(session, content_asin))
+
+
 def fetch_metadata(
-    session: AmazonMusicMobileAPI, content_asin: str, defer_track_cover: bool = False
+    session: AmazonMusicMobileAPI, content_asin: str, defer_track_cover: bool = False,
+    type_hint: Optional[str] = None,
 ) -> Tuple[str, object]:
     """Resolve an ASIN to its kind and metadata:
 
@@ -270,7 +288,23 @@ def fetch_metadata(
     path resolves it concurrently via `resolve_track_cover` so it doesn't block
     the license. Albums/artists/playlists are unaffected (their cover lookup is a
     shared per-album call, not on the per-track critical path).
+
+    `type_hint` ('playlist' / 'user-playlist', from a link's shape) lets a known
+    playlist skip the doomed muse `get_metadata` call (playlists aren't served by
+    muse) and hit the named catalog vs user/library endpoint first. A wrong hint is
+    harmless: if the playlist endpoints don't resolve it, we fall through to the full
+    muse-based resolution below.
     """
+    # A link of known playlist shape is served only by the playlist endpoints, never
+    # muse — skip the wasted muse round-trip and resolve it directly, trying the
+    # endpoint the link shape names (catalog vs user/library) first.
+    if type_hint in ("playlist", "user-playlist"):
+        playlist = _resolve_playlist(
+            session, content_asin, prefer_user=(type_hint == "user-playlist")
+        )
+        if playlist is not None:
+            return "playlist", playlist
+
     # Playlists aren't served by the muse lookup endpoint, so a playlist ASIN can
     # make get_metadata error — swallow that and fall through to the playlist path.
     try:
@@ -324,14 +358,9 @@ def fetch_metadata(
         # catalog-playlist ASIN; a longer id (uuid / library id) is a user playlist
         # (mirrors the submodule's `len == 10` discriminator). Try the likely
         # endpoint first, then the other, so either link shape resolves.
-        # Imported lazily to avoid an import cycle (playlist imports this module).
-        from metadata.playlist import try_fetch_playlist, try_fetch_user_playlist
-        if len(str(content_asin)) == 10:
-            playlist = (try_fetch_playlist(session, content_asin)
-                        or try_fetch_user_playlist(session, content_asin))
-        else:
-            playlist = (try_fetch_user_playlist(session, content_asin)
-                        or try_fetch_playlist(session, content_asin))
+        playlist = _resolve_playlist(
+            session, content_asin, prefer_user=len(str(content_asin)) != 10
+        )
         if playlist is not None:
             return "playlist", playlist
         raise ValueError(

@@ -145,9 +145,13 @@ async def run_search(args):
         ui.print_error("Widevine device not found")
         sys.exit(1)
 
+    # The picked result's type is known, so a track lets download() fetch the
+    # manifest/lyrics concurrently with metadata instead of after it (unless the
+    # `use_link_hints` config opt-out is off).
+    type_hint = search_type if settings["use_link_hints"] else None
     await download(session, results[choice].asin, output_dir, quality, wvd_path,
                    plain=args.verbose, concurrency=concurrency,
-                   metadata_concurrency=metadata_concurrency)
+                   metadata_concurrency=metadata_concurrency, type_hint=type_hint)
 
 
 async def run_download(args):
@@ -181,10 +185,16 @@ async def run_download(args):
         ui.print_error("Widevine device not found")
         sys.exit(1)
 
+    # A link reveals up-front signals from its shape/domain (`LinkHint`): its content
+    # type and its region. (A bare ASIN or text-file path yields an empty hint.) The
+    # `use_link_hints` config opt-out disables both uses.
+    hint = links.hint(args.content_asin) if settings["use_link_hints"] else links.LinkHint()
+
     # Builds a signed session from stored credentials; signs in interactively
     # (browser OAuth) on first use and persists the login. `--account` picks among
-    # several stored accounts (id / name / country); omitted uses the default/sole one.
-    session = auth.get_session(account=args.account)
+    # several stored accounts (id / name / country); omitted, a link's region picks
+    # the matching stored account, else the default/sole one (or the picker).
+    session = auth.get_session(account=args.account, country_hint=hint.country)
 
     # A text file of inputs gets the artist-style two-phase batch bar (resolve every
     # input's tracks, then download them all as one set). A bare ASIN/link keeps the
@@ -195,9 +205,15 @@ async def run_download(args):
                              plain=args.verbose, concurrency=concurrency,
                              metadata_concurrency=metadata_concurrency)
     else:
+        # A link encodes its type in its shape (e.g. /tracks/ or ?trackAsin=), so a
+        # known-track input lets download() fetch the manifest/lyrics concurrently
+        # with metadata; a bare ASIN (no hint) resolves the type from metadata first.
+        # (`hint` is already empty when `use_link_hints` is off.)
+        type_hint = hint.type
         await download(session, asins[0], output_dir, quality, wvd_path,
                        plain=args.verbose, concurrency=concurrency,
-                       metadata_concurrency=metadata_concurrency)
+                       metadata_concurrency=metadata_concurrency,
+                       type_hint=type_hint)
 
 
 def _account_options():

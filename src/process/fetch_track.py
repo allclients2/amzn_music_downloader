@@ -140,7 +140,7 @@ async def process_track(
     callback invoked at the start of each stage (drives the progress bar).
 
     Returns True when the track was skipped because an output file already exists
-    (so callers can tally a "N file(s) already exist; skipped." note); otherwise None.
+    (so callers can tally a "N file(s) already existed; skipped." note); otherwise None.
     """
     def step(desc):
         _log.debug(desc)

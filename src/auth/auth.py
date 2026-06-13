@@ -217,10 +217,25 @@ def _account_label(account_id: str, store: dict, accounts: dict | None = None) -
     return f"{name} — {region} [{account_id}]"
 
 
-def _select_credentials(store: dict, account: str | None, country: str | None):
-    """Pick stored credentials by explicit account, by region, or by the default/
-    sole account. Returns the credentials, or None when the choice is ambiguous or
-    the requested region isn't stored yet (the caller decides whether to prompt)."""
+def _account_for_country(store: dict, target: str):
+    """The first stored account whose region matches `target` (a 2-letter code), or
+    None when none is stored."""
+    target = target.strip().upper()
+    for creds in store.values():
+        region = creds.account_region
+        if region and region.country == target:
+            return creds
+    return None
+
+
+def _select_credentials(
+    store: dict, account: str | None, country: str | None,
+    country_hint: str | None = None,
+):
+    """Pick stored credentials by explicit account, by region, by a link's region
+    hint, or by the default/sole account. Returns the credentials, or None when the
+    choice is ambiguous or the requested region isn't stored yet (the caller decides
+    whether to prompt)."""
     if not store:
         return None
 
@@ -236,12 +251,17 @@ def _select_credentials(store: dict, account: str | None, country: str | None):
         )
 
     if country:
-        target = country.strip().upper()
-        for creds in store.values():
-            region = creds.account_region
-            if region and region.country == target:
-                return creds
-        return None  # region not stored yet -> caller may sign in for it
+        # Explicit region request: select it, else None so the caller signs in for it.
+        return _account_for_country(store, country)
+
+    if country_hint:
+        # Soft hint from a link's domain: prefer the matching stored account when one
+        # exists, but fall through to the default/sole/prompt logic when it doesn't —
+        # never sign in for an unstored region just because a link named it.
+        creds = _account_for_country(store, country_hint)
+        if creds is not None:
+            info = _account_info(creds)
+            return creds
 
     # Nothing requested: use the configured default, then the sole account, else None.
     default = (config.get_settings().get("default_account") or "").strip()
@@ -268,20 +288,23 @@ def _prompt_account(store: dict) -> str | None:
 def get_session(
     account: str | None = None,
     country: str | None = None,
+    country_hint: str | None = None,
     interactive: bool = True,
 ) -> AmazonMusicMobileAPI:
     """Return a ready-to-use signed session, signing in interactively if needed.
 
     `account` selects a stored account by id (customer_id), name, or country code;
-    `country` selects by region. With neither, the `default_account` from config is
-    used, or the sole stored account, or — when interactive — the user is asked to
-    pick one (or sign in). Set `interactive=False` to raise instead of prompting
-    when no single account can be resolved.
+    `country` selects by region. `country_hint` (e.g. a link's domain region) is a
+    *soft* preference: the matching stored account is used when one exists, otherwise
+    it's ignored. With none of these set, the `default_account` from config is used,
+    or the sole stored account, or — when interactive — the user is asked to pick one
+    (or sign in). Set `interactive=False` to raise instead of prompting when no single
+    account can be resolved.
     """
     store = _load_store()
     _sync_accounts(store)  # keep config.json's accounts table current
 
-    credentials = _select_credentials(store, account, country)
+    credentials = _select_credentials(store, account, country, country_hint)
 
     if credentials is None:
         if not interactive:
