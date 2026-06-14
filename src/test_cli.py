@@ -10,7 +10,7 @@ Five modes, matching the branches of `main.run_download()`:
 
     python src/test_cli.py              # single track (default)
     python src/test_cli.py --album      # multi-track album
-    python src/test_cli.py --playlist   # playlist (flat set of tracks)
+    python src/test_cli.py --playlist   # playlist (two-phase: member metadata, then tracks)
     python src/test_cli.py --artist     # artist (sequence of albums)
     python src/test_cli.py --batch      # text file of mixed inputs (two-phase bar)
     python src/test_cli.py B07JZ7PW6F   # single track, your own ASIN
@@ -91,13 +91,15 @@ def _make_track(asin, title, track_number=1, total_tracks=1, disc=1, total_discs
     )
 
 
-def _fake_track_metadata(session, asin, defer_track_cover=False, type_hint=None):
+def _fake_track_metadata(session, asin, defer_track_cover=False, type_hint=None,
+                         defer_playlist_tracks=False):
     """Return ('track', TrackMetadata) exactly like metadata.fetch_metadata."""
     track = _make_track(asin, "Fake Track Marquee Example Fake Track Marquee Example")
     return "track", track
 
 
-def _fake_album_metadata(session, asin, defer_track_cover=False, type_hint=None):
+def _fake_album_metadata(session, asin, defer_track_cover=False, type_hint=None,
+                         defer_playlist_tracks=False):
     """Return ('album', AlbumMetadata) exactly like metadata.fetch_metadata."""
     n = len(_ALBUM_TRACKS)
     tracks = [
@@ -120,19 +122,59 @@ def _fake_album_metadata(session, asin, defer_track_cover=False, type_hint=None)
     return "album", album
 
 
-def _fake_playlist_metadata(session, asin, defer_track_cover=False, type_hint=None):
-    """Return ('playlist', PlaylistMetadata) exactly like metadata.fetch_metadata."""
+def _fake_playlist_metadata(session, asin, defer_track_cover=False, type_hint=None,
+                            defer_playlist_tracks=False):
+    """Return ('playlist', PlaylistMetadata) exactly like metadata.fetch_metadata.
+
+    Mirrors the real deferral: with `defer_playlist_tracks` (the direct-download path)
+    only `track_asins` is returned and the member metadata is built later, behind the
+    two-phase bar, by the patched `_playlist_member_meta` / `_build_playlist_tracks`;
+    without it (the batch path) the member `tracks` are returned eagerly."""
     n = len(_ALBUM_TRACKS)
-    tracks = [
-        _make_track(f"{asin}T{i:02d}", title, track_number=i, total_tracks=n)
-        for i, title in enumerate(_ALBUM_TRACKS, start=1)
+    track_asins = [f"{asin}T{i:02d}" for i in range(1, n + 1)]
+    tracks = [] if defer_playlist_tracks else [
+        _make_track(a, title, track_number=i, total_tracks=n)
+        for i, (a, title) in enumerate(zip(track_asins, _ALBUM_TRACKS), start=1)
     ]
     return "playlist", PlaylistMetadata(
-        name="Fake Playlist: A Marquee Example Mix", asin=asin, tracks=tracks
+        name="Fake Playlist: A Marquee Example Mix", asin=asin,
+        track_asins=track_asins, tracks=tracks,
     )
 
 
-def _fake_artist_metadata(session, asin, defer_track_cover=False, type_hint=None):
+# Split a playlist's members across this many fake albums so phase-1's albums/s
+# aggregate has several items to tick through.
+_FAKE_PLAYLIST_ALBUMS = 3
+
+
+async def _fake_playlist_member_meta(session, track_asins, metadata_concurrency):
+    """Group the playlist's member ASINs into a few fake albums (phase-1 prelude)."""
+    by_album = {}
+    for i, asin in enumerate(track_asins):
+        album = f"{_FAKE_ALBUM_ASIN}{i % _FAKE_PLAYLIST_ALBUMS}"
+        by_album.setdefault(album, []).append(asin)
+    return {}, {}, by_album
+
+
+async def _fake_build_playlist_tracks(session, rich, albums, by_album, track_asins,
+                                      metadata_concurrency, on_album=None):
+    """Build fake member tracks, ticking the albums/s aggregate once per album so
+    the phase-1 metadata bar animates the way a genuine fetch would."""
+    n = len(track_asins)
+    titles = (_ALBUM_TRACKS * (n // len(_ALBUM_TRACKS) + 1))[:n]
+    title_of = dict(zip(track_asins, titles))
+    built = {}
+    for members in by_album.values():
+        await asyncio.sleep(0.3)  # pretend per-album cover search + build
+        for asin in members:
+            built[asin] = _make_track(asin, title_of[asin], total_tracks=n)
+        if on_album:
+            on_album()
+    return [built[a] for a in track_asins if a in built]
+
+
+def _fake_artist_metadata(session, asin, defer_track_cover=False, type_hint=None,
+                          defer_playlist_tracks=False):
     """Dispatch like metadata.fetch_metadata: the artist ASIN resolves to a list of
     album ASINs, and each of those resolves to a full album (download() recurses)."""
     if asin == _FAKE_ARTIST_ASIN:
@@ -144,7 +186,8 @@ def _fake_artist_metadata(session, asin, defer_track_cover=False, type_hint=None
     return _fake_album_metadata(session, asin)
 
 
-def _fake_batch_metadata(session, asin, defer_track_cover=False, type_hint=None):
+def _fake_batch_metadata(session, asin, defer_track_cover=False, type_hint=None,
+                         defer_playlist_tracks=False):
     """Dispatch a batch file's mixed inputs the way metadata.fetch_metadata would:
     each input id resolves to its own kind (track / album / playlist / artist), and
     the artist's album ASINs resolve to full albums."""
@@ -224,6 +267,10 @@ def main_test():
     download.fetch_representations = _fake_representations
     download.process_track = _fake_process_track
     download.fetch_track = _fake_fetch_track
+    # The playlist path builds member metadata behind the two-phase bar; fake the two
+    # build helpers so phase 1 animates without touching the muse/cover endpoints.
+    download._playlist_member_meta = _fake_playlist_member_meta
+    download._build_playlist_tracks = _fake_build_playlist_tracks
 
     # The batch path needs a real text file of mixed inputs so links.resolve_inputs
     # reads it and run_download routes to the two-phase batch bar.

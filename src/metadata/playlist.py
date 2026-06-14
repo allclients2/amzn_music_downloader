@@ -18,8 +18,8 @@ from metadata.metadata import (
     _build_track,
     _disc_total,
     _fetch_album_data,
-    _fetch_tracks,
     _hi_res_cover,
+    fetch_tracks_and_albums,
 )
 
 
@@ -40,11 +40,13 @@ def _build_tracks_from_asins(
 ) -> List[TrackMetadata]:
     """`TrackMetadata` for an arbitrary list of track ASINs (playlist members).
 
-    The muse lookups are batched, and each distinct album is fetched (and its cover
-    resolved) only once, while the original track order is preserved.
+    The muse lookups are batched and each member's album rides along in the *same*
+    response (`fetch_tracks_and_albums`), so no second per-album round-trip is made;
+    each distinct album's cover is resolved only once and the original track order is
+    preserved. (The direct-download path uses the concurrent, progress-reporting
+    equivalent in `process.download`; this serial builder backs the batch path.)
     """
-    rich = _fetch_tracks(session, track_asins)
-    album_cache: dict = {}
+    rich, albums = fetch_tracks_and_albums(session, track_asins)
     cover_cache: dict = {}
     tracks: List[TrackMetadata] = []
     for asin in track_asins:
@@ -54,11 +56,11 @@ def _build_tracks_from_asins(
         album_asin = (td.get("album") or {}).get("asin")
         if not album_asin:
             continue
-        if album_asin not in album_cache:
-            album_data = _fetch_album_data(session, album_asin)
-            album_cache[album_asin] = album_data
+        album_data = albums.get(album_asin)
+        if album_data is None:
+            album_data = albums[album_asin] = _fetch_album_data(session, album_asin)
+        if album_asin not in cover_cache:
             cover_cache[album_asin] = _hi_res_cover(session, album_data)
-        album_data = album_cache[album_asin]
         tracks.append(
             _build_track(td, album_data, _disc_total(album_data), cover_cache[album_asin])
         )
@@ -66,19 +68,25 @@ def _build_tracks_from_asins(
 
 
 def _playlist_from_data(
-    session: AmazonMusicMobileAPI, p_data: dict, playlist_id: str
+    session: AmazonMusicMobileAPI, p_data: dict, playlist_id: str,
+    build_tracks: bool = True,
 ) -> Optional[PlaylistMetadata]:
     """Build a `PlaylistMetadata` from a playlist payload (catalog or user), or None
     if it carries no resolvable tracks. Both endpoints model a playlist as a dict
-    with a `tracks` list and a `metadata.title`, so they share this builder."""
+    with a `tracks` list and a `metadata.title`, so they share this builder.
+
+    With `build_tracks=False` only the member `track_asins` + `name` are resolved
+    (`tracks` left empty) — the caller builds the member metadata itself with
+    progress. "No resolvable tracks" then means "no member ASINs at all"; the actual
+    `TrackMetadata` build is deferred."""
     if not isinstance(p_data, dict):
         return None
     raw_tracks = p_data.get("tracks") or []
     track_asins = [a for a in (_playlist_track_asin(t) for t in raw_tracks) if a]
     if not track_asins:
         return None
-    tracks = _build_tracks_from_asins(session, track_asins)
-    if not tracks:
+    tracks = _build_tracks_from_asins(session, track_asins) if build_tracks else []
+    if build_tracks and not tracks:
         return None
     meta = p_data.get("metadata") if isinstance(p_data.get("metadata"), dict) else {}
     name = (
@@ -87,14 +95,17 @@ def _playlist_from_data(
         or p_data.get("name")
         or "Unknown Playlist"
     )
-    return PlaylistMetadata(name=str(name), asin=str(playlist_id), tracks=tracks)
+    return PlaylistMetadata(
+        name=str(name), asin=str(playlist_id), track_asins=track_asins, tracks=tracks
+    )
 
 
 def try_fetch_playlist(
-    session: AmazonMusicMobileAPI, playlist_asin: str
+    session: AmazonMusicMobileAPI, playlist_asin: str, build_tracks: bool = True
 ) -> Optional[PlaylistMetadata]:
     """Resolve a catalog-playlist ASIN to a `PlaylistMetadata`, or None if the ASIN
-    isn't a catalog playlist (so the caller can fall back / raise a combined error)."""
+    isn't a catalog playlist (so the caller can fall back / raise a combined error).
+    `build_tracks=False` defers the member-metadata build (see `_playlist_from_data`)."""
     try:
         catalog = session.get_catalog_playlist(playlist_asin)
     except Exception:
@@ -104,16 +115,17 @@ def try_fetch_playlist(
     p_data = catalog.get("playlist")
     if not isinstance(p_data, dict):
         p_data = catalog
-    return _playlist_from_data(session, p_data, playlist_asin)
+    return _playlist_from_data(session, p_data, playlist_asin, build_tracks)
 
 
 def try_fetch_user_playlist(
-    session: AmazonMusicMobileAPI, playlist_id: str
+    session: AmazonMusicMobileAPI, playlist_id: str, build_tracks: bool = True
 ) -> Optional[PlaylistMetadata]:
     """Resolve a user/library-playlist id (a uuid or library id from a
     `my/playlists/<id>` or `user-playlists/<id>` link) to a `PlaylistMetadata`, or
     None if it isn't a user playlist. Served by `getPlaylistsByIdV2`, which returns
-    its playlist(s) under a `playlists` list rather than catalog's `playlist`."""
+    its playlist(s) under a `playlists` list rather than catalog's `playlist`.
+    `build_tracks=False` defers the member-metadata build (see `_playlist_from_data`)."""
     try:
         resp = session.get_user_playlist(playlist_id)
     except Exception:
@@ -123,4 +135,4 @@ def try_fetch_user_playlist(
     playlists = resp.get("playlists") or []
     if not playlists:
         return None
-    return _playlist_from_data(session, playlists[0], playlist_id)
+    return _playlist_from_data(session, playlists[0], playlist_id, build_tracks)

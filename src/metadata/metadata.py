@@ -70,9 +70,12 @@ class AlbumMetadata:
 class PlaylistMetadata:
     """A playlist resolved to its member tracks. Each `TrackMetadata` keeps its own
     album/artist tags, so tracks still land under `<album_artist>/<album>/`; `name`
-    is only used for the progress header."""
+    is only used for the progress header. `track_asins` is the raw member list (always
+    populated); `tracks` is the built metadata — deferred (left empty) when the caller
+    asks to build it itself with progress (see `defer_playlist_tracks`)."""
     name: str
     asin: str
+    track_asins: List[str] = field(default_factory=list)
     tracks: List[TrackMetadata] = field(default_factory=list)
 
 
@@ -83,6 +86,26 @@ class ArtistMetadata:
     name: str
     asin: str
     album_asins: List[str] = field(default_factory=list)
+
+
+# Amazon suffixes some titles/album names with an explicitness label
+# (`good kid, m.A.A.d city (Deluxe) [Explicit]`). Strip only that exact trailing
+# `[Explicit]`/`[Clean]` tag — never other trailing brackets like `[feat. …]`.
+_EXPLICITNESS_LABEL_RE = re.compile(r"\s*\[(?:explicit|clean)\]\s*$", re.IGNORECASE)
+
+
+def _strip_explicitness_label(name: Optional[str]) -> Optional[str]:
+    """Remove a trailing `[Explicit]`/`[Clean]` label from a title/album name.
+
+    Used before the value reaches tags or the file path. Only the exact bracketed
+    label at the very end is removed (case-insensitive); a `[feat. …]` or other
+    trailing bracket is left intact. A name that is *only* the label (or empty) is
+    returned unchanged so we never produce an empty title/album.
+    """
+    if not name:
+        return name
+    stripped = _EXPLICITNESS_LABEL_RE.sub("", name).strip()
+    return stripped or name
 
 
 def _ms_to_date(ms) -> Optional[str]:
@@ -207,9 +230,9 @@ def _build_track(
     product = album_data.get("productDetails") or {}
     return TrackMetadata(
         asin=track_data.get("asin"),
-        title=track_data.get("title"),
+        title=_strip_explicitness_label(track_data.get("title")),
         artist=(track_data.get("artist") or {}).get("name"),
-        album_name=album_data.get("title"),
+        album_name=_strip_explicitness_label(album_data.get("title")),
         album_artist=album_data.get("primaryArtistName")
         or (album_data.get("artist") or {}).get("name"),
         album_asin=album_data.get("asin"),
@@ -257,26 +280,56 @@ def _fetch_tracks(session: AmazonMusicMobileAPI, asins: List[str]) -> dict:
     return out
 
 
+def fetch_meta_chunk(
+    session: AmazonMusicMobileAPI, asins: List[str]
+) -> Tuple[dict, dict]:
+    """One muse `get_metadata` call for up to `_BATCH_SIZE` ASINs, returning
+    ({asin: track_data}, {album_asin: album_data}) from the *same* response. A track
+    lookup already carries its album in `albumList`, so the album data rides along —
+    no separate per-album round-trip is needed (the wasteful "two-way" lookup)."""
+    resp = session.get_metadata(tuple(asins))
+    tracks = {td["asin"]: td for td in (resp.get("trackList") or []) if td.get("asin")}
+    albums = {ad["asin"]: ad for ad in (resp.get("albumList") or []) if ad.get("asin")}
+    return tracks, albums
+
+
+def fetch_tracks_and_albums(
+    session: AmazonMusicMobileAPI, asins: List[str]
+) -> Tuple[dict, dict]:
+    """`fetch_meta_chunk` over all ASINs, chunked (serial). Returns the merged
+    ({asin: track_data}, {album_asin: album_data}) maps."""
+    tracks: dict = {}
+    albums: dict = {}
+    for i in range(0, len(asins), _BATCH_SIZE):
+        t, a = fetch_meta_chunk(session, asins[i:i + _BATCH_SIZE])
+        tracks.update(t)
+        albums.update(a)
+    return tracks, albums
+
+
 def _resolve_playlist(
-    session: AmazonMusicMobileAPI, content_asin: str, prefer_user: bool
+    session: AmazonMusicMobileAPI, content_asin: str, prefer_user: bool,
+    build_tracks: bool = True,
 ) -> Optional["PlaylistMetadata"]:
     """Resolve a playlist id to `PlaylistMetadata`, trying the preferred endpoint
     (catalog vs user/library) first and the other as fallback; None if neither serves
     it. An id's catalog-vs-user nature is only a heuristic (length) or a link-shape
     hint, so one of the two calls may be wasted — `prefer_user` orders them to make
-    the wasted one the less likely."""
+    the wasted one the less likely. With `build_tracks=False` the member tracks are
+    left unbuilt (only `track_asins` + `name` resolved), so the caller can build them
+    itself with progress."""
     # Imported lazily to avoid an import cycle (playlist imports this module).
     from metadata.playlist import try_fetch_playlist, try_fetch_user_playlist
     if prefer_user:
-        return (try_fetch_user_playlist(session, content_asin)
-                or try_fetch_playlist(session, content_asin))
-    return (try_fetch_playlist(session, content_asin)
-            or try_fetch_user_playlist(session, content_asin))
+        return (try_fetch_user_playlist(session, content_asin, build_tracks)
+                or try_fetch_playlist(session, content_asin, build_tracks))
+    return (try_fetch_playlist(session, content_asin, build_tracks)
+            or try_fetch_user_playlist(session, content_asin, build_tracks))
 
 
 def fetch_metadata(
     session: AmazonMusicMobileAPI, content_asin: str, defer_track_cover: bool = False,
-    type_hint: Optional[str] = None,
+    type_hint: Optional[str] = None, defer_playlist_tracks: bool = False,
 ) -> Tuple[str, object]:
     """Resolve an ASIN to its kind and metadata:
 
@@ -294,13 +347,19 @@ def fetch_metadata(
     muse) and hit the named catalog vs user/library endpoint first. A wrong hint is
     harmless: if the playlist endpoints don't resolve it, we fall through to the full
     muse-based resolution below.
+
+    With `defer_playlist_tracks=True` a playlist resolves only to its `track_asins`
+    (and `name`), leaving `tracks` empty so the caller can build the member metadata
+    itself behind a progress bar (see `process.download._download_playlist`).
     """
+    build_tracks = not defer_playlist_tracks
     # A link of known playlist shape is served only by the playlist endpoints, never
     # muse — skip the wasted muse round-trip and resolve it directly, trying the
     # endpoint the link shape names (catalog vs user/library) first.
     if type_hint in ("playlist", "user-playlist"):
         playlist = _resolve_playlist(
-            session, content_asin, prefer_user=(type_hint == "user-playlist")
+            session, content_asin, prefer_user=(type_hint == "user-playlist"),
+            build_tracks=build_tracks,
         )
         if playlist is not None:
             return "playlist", playlist
@@ -359,7 +418,8 @@ def fetch_metadata(
         # (mirrors the submodule's `len == 10` discriminator). Try the likely
         # endpoint first, then the other, so either link shape resolves.
         playlist = _resolve_playlist(
-            session, content_asin, prefer_user=len(str(content_asin)) != 10
+            session, content_asin, prefer_user=len(str(content_asin)) != 10,
+            build_tracks=build_tracks,
         )
         if playlist is not None:
             return "playlist", playlist
@@ -385,7 +445,7 @@ def fetch_metadata(
 
     product = album_data.get("productDetails") or {}
     album = AlbumMetadata(
-        album_name=album_data.get("title"),
+        album_name=_strip_explicitness_label(album_data.get("title")),
         artist_name=album_data.get("primaryArtistName")
         or (album_data.get("artist") or {}).get("name"),
         album_asin=album_data.get("asin"),

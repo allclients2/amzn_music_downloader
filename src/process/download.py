@@ -8,9 +8,12 @@
   Otherwise the kind is resolved from metadata first — the one request valid for any
   input — and the manifest/lyrics are fetched only once the track kind is confirmed,
   so they're never fired speculatively against an album/artist/playlist.
-- **Album / playlist**: a flat set of tracks under an `asyncio.Semaphore`.
-- **Artist**: `_download_artist` runs two phases on one bar — fetch every album's
-  metadata up front (albums/s), then flatten and download every track (tracks/s).
+- **Album**: a flat set of tracks under an `asyncio.Semaphore`.
+- **Artist / playlist**: `_download_artist` / `_download_playlist` run two phases on
+  one bar — fetch every album's metadata up front (albums/s), then flatten and
+  download every track (tracks/s). A playlist's phase 1 builds its member tracks: the
+  member muse lookup returns each track's album in the *same* response (no second
+  per-album round-trip), and the per-album cover search runs concurrently.
 
 `download_batch()` mirrors the artist's two-phase bar over a text file's inputs:
 resolve every input to its tracks (input/s), then download them as one set
@@ -23,7 +26,15 @@ import asyncio
 from cli import ui
 from cli.progress import Progress
 from process.fetch_track import fetch_track, process_track, purge_temp_dir
-from metadata.metadata import fetch_metadata
+from metadata.metadata import (
+    _BATCH_SIZE,
+    _build_track,
+    _disc_total,
+    _fetch_album_data,
+    _hi_res_cover,
+    fetch_metadata,
+    fetch_meta_chunk,
+)
 from metadata.mpd_info import fetch_representations, select_representation
 
 
@@ -83,11 +94,13 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             kind, meta = meta_res
         else:
             # A 'playlist'/'user-playlist' hint lets fetch_metadata skip the doomed
-            # muse lookup and hit the right playlist endpoint first.
+            # muse lookup and hit the right playlist endpoint first. A playlist's
+            # member tracks are left unbuilt (defer_playlist_tracks) so _download_
+            # playlist can build them behind a progress bar.
             prog.set_desc("fetching metadata")
             kind, meta = await asyncio.to_thread(
                 fetch_metadata, session, asin, defer_track_cover=True,
-                type_hint=type_hint,
+                type_hint=type_hint, defer_playlist_tracks=True,
             )
 
         if kind == "artist":
@@ -96,6 +109,17 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             # metadata, then track downloads); tear down this placeholder first.
             prog.abort()
             await _download_artist(
+                session, asin, meta, output_dir, quality, wvd_path, plain,
+                concurrency, metadata_concurrency
+            )
+            return
+
+        if kind == "playlist":
+            # A playlist resolved only to its member ASINs (deferred build). Hand off
+            # to a fresh two-phase bar (member metadata, then track downloads) so the
+            # build shows progress instead of blocking on this placeholder.
+            prog.abort()
+            await _download_playlist(
                 session, asin, meta, output_dir, quality, wvd_path, plain,
                 concurrency, metadata_concurrency
             )
@@ -123,12 +147,11 @@ async def download(session, asin, output_dir, quality, wvd_path="device.wvd", pl
             prog.finish()
             _note_skipped([skipped])
         else:
-            # Album or playlist: a flat set of tracks downloaded up to
-            # `concurrency` at once. The aggregate line counts completed tracks;
-            # each in-flight track gets its own step-progress slot line. A
-            # playlist's tracks keep their own album tags, so each still lands
-            # under `<album_artist>/<album>/`.
-            prog.set_name(meta.album_name if kind == "album" else meta.name)
+            # Album: a flat set of tracks downloaded up to `concurrency` at once.
+            # The aggregate line counts completed tracks; each in-flight track gets
+            # its own step-progress slot line. (Playlists/artists are handled by the
+            # two-phase branches above.)
+            prog.set_name(meta.album_name)
             prog.begin_custom(len(meta.tracks))
             results = await _run_tracks(
                 prog, session, meta.tracks, output_dir, quality, wvd_path, concurrency
@@ -230,6 +253,113 @@ async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
         if not tracks:
             prog.abort()
             ui.note(f"No downloadable tracks found for artist '{artist.name}'.")
+            return
+
+        # ── Phase 2: download every track (tracks/s) ──────────────────────────
+        prog.begin_custom(len(tracks), rate_label="tracks/s")
+        results = await _run_tracks(
+            prog, session, tracks, output_dir, quality, wvd_path, concurrency
+        )
+        prog.finish()
+        _note_skipped(results)
+    except Exception:
+        prog.abort()
+        raise
+    finally:
+        purge_temp_dir(output_dir)
+
+
+async def _playlist_member_meta(session, track_asins, metadata_concurrency):
+    """Phase-1 prelude for a playlist: fetch every member's track muse data
+    (`metadata_concurrency` chunks at once). The album rides along in the *same*
+    response as the track (`fetch_meta_chunk`), so album data is collected here too —
+    no separate per-album round-trip. Returns `(rich, albums, by_album)` where `rich`
+    maps each member ASIN to its track data, `albums` maps album ASIN to album data,
+    and `by_album` maps each album ASIN to its member ASINs in playlist order."""
+    sem = asyncio.Semaphore(max(1, metadata_concurrency))
+    rich: dict = {}
+    albums: dict = {}
+    chunks = [track_asins[i:i + _BATCH_SIZE]
+              for i in range(0, len(track_asins), _BATCH_SIZE)]
+
+    async def fetch_chunk(chunk):
+        async with sem:
+            tracks, alb = await asyncio.to_thread(fetch_meta_chunk, session, chunk)
+            rich.update(tracks)
+            albums.update(alb)
+
+    await asyncio.gather(*(fetch_chunk(c) for c in chunks))
+
+    by_album: dict = {}
+    for asin in track_asins:
+        td = rich.get(asin)
+        album_asin = (td.get("album") or {}).get("asin") if td else None
+        if album_asin:
+            by_album.setdefault(album_asin, []).append(asin)
+    return rich, albums, by_album
+
+
+async def _build_playlist_tracks(session, rich, albums, by_album, track_asins,
+                                 metadata_concurrency, on_album=None):
+    """Phase-1 build for a playlist: per album (concurrently, `metadata_concurrency`
+    at a time) resolve its hi-res cover and build its member tracks, then flatten back
+    into playlist order. `on_album` ticks once per album resolved, driving the albums/s
+    aggregate exactly like the artist's album-metadata phase."""
+    sem = asyncio.Semaphore(max(1, metadata_concurrency))
+    built: dict = {}
+
+    async def build_album(album_asin, members):
+        async with sem:
+            album_data = albums.get(album_asin) or await asyncio.to_thread(
+                _fetch_album_data, session, album_asin
+            )
+            cover = await asyncio.to_thread(_hi_res_cover, session, album_data)
+            disc_total = _disc_total(album_data)
+            for asin in members:
+                if asin in rich:
+                    built[asin] = _build_track(rich[asin], album_data, disc_total, cover)
+        if on_album:
+            on_album()
+
+    await asyncio.gather(*(build_album(a, m) for a, m in by_album.items()))
+    return [built[a] for a in track_asins if a in built]
+
+
+async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_path,
+                             plain, concurrency, metadata_concurrency):
+    """Download a playlist's member tracks in two phases under one progress bar,
+    mirroring the artist layout:
+
+    1. Build every member's metadata up front. A quick concurrent prelude fetches all
+       member track+album muse data (the album rides along in the same response, so no
+       second per-album round-trip), then a single aggregate bar ticks as each album's
+       cover resolves and its tracks are built (albums/s).
+    2. Flatten every member into one track list and download them like a big album —
+       the multi-slot track view (tracks/s), `concurrency` tracks at a time.
+
+    Each member track keeps its own album tags, so it still files under
+    `<album_artist>/<album>/`."""
+    track_asins = playlist.track_asins
+    if not track_asins:
+        ui.note(f"No tracks found in playlist '{playlist.name}'.")
+        return
+
+    prog = Progress(asin=asin, plain=plain)
+    prog.set_name(playlist.name)
+    try:
+        # ── Phase 1: build every member's metadata (albums/s) ─────────────────
+        prog.set_desc("fetching metadata")
+        rich, albums, by_album = await _playlist_member_meta(
+            session, track_asins, metadata_concurrency
+        )
+        prog.begin_custom(len(by_album), rate_label="albums/s")
+        tracks = await _build_playlist_tracks(
+            session, rich, albums, by_album, track_asins, metadata_concurrency,
+            on_album=prog.advance_aggregate,
+        )
+        if not tracks:
+            prog.abort()
+            ui.note(f"No downloadable tracks found in playlist '{playlist.name}'.")
             return
 
         # ── Phase 2: download every track (tracks/s) ──────────────────────────
