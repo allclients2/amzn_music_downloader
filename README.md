@@ -316,6 +316,7 @@ fixes with `git submodule update --remote`.
 | Symptom | Likely cause / fix |
 |---|---|
 | `Widevine device not found` | No `device.wvd` at the expected path — place one in the repo root or pass `--wvd-path`. |
+| `Failed to get license: 400 … DEVICE_NOT_ELIGIBLE` (`ForbiddenException`) | Your `device.wvd` is invalid or has been revoked — Amazon won't issue a license to it. Provision a fresh, eligible Widevine device file and point `--wvd-path` / `default_wvd_path` at it. |
 | `ImportError` for `amazonmusic` | Submodule not fetched — run `git submodule update --init --recursive`. |
 | `ffmpeg` not found | Not on `PATH` — install it and reopen your shell. |
 | Imports fail when running the script | You ran it from somewhere other than the repo root — `cd` to the repo root and run `python src/main.py …`. |
