@@ -13,7 +13,7 @@ Every file lands at:
 ```
 
 > [!NOTE]
-> For education purposes only. You are responsible for complying with Amazon
+> For educational purposes only. You are responsible for complying with Amazon
 > Music's terms and your local laws.
 
 Built and tested on **Windows 11 (25H2)** and **macOS Tahoe (26.4.1)** with
@@ -91,36 +91,15 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 Then create an environment and install dependencies:
 
 ```bash
-# Create a virtual environment pinned to Python 3.13 (uv will fetch it if needed)
 uv venv --python 3.13
 
-# Install the dependencies into it
 uv pip install -r requirements.txt
-```
+uv pip install -r src/amazonmusic/requirements.txt
 
-Run commands either by activating the venv or with `uv run`:
-
-```bash
-# Option A — activate, then run normally
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
 python src/main.py --version
-
-# Option B — no activation needed
-uv run python src/main.py --version
 ```
-
-### Setup with `pip` + venv
-
-Prefer the standard toolchain? A plain virtual environment works just as well:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate         # Windows: .venv\Scripts\activate
-
-pip install -r requirements.txt
-```
-
----
 
 ## First run & authentication
 
@@ -143,9 +122,9 @@ be stored side by side.
 ### Downloading
 
 ```text
-python src/main.py [-h] [--version] [--account ACCOUNT] [--output OUTPUT]
-                   [-v] [--quality TIER] [--wvd-path WVD_PATH]
-                   content_asin
+usage: main.py [-h] [--version] [--account ACCOUNT] [--output OUTPUT] [-v] [--quality TIER] [--wvd-path WVD_PATH]
+               [--metadata-concurrency N]
+               INPUT
 ```
 
 | Flag | Description |
