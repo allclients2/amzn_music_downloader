@@ -142,7 +142,6 @@ def login(country: str) -> AmazonMusicMobileAPI:
     # Validate the region up front so a typo fails before the browser step.
     AmazonRegion.get_region_by_country(country)
 
-    ui.note(f"Signing in to Amazon Music for region: {country}")
     inst = AmazonMusicMobileAPI.login_via_mobile(
         email="",
         password="",
