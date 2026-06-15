@@ -1,5 +1,8 @@
 [project]
 name = "amzn_music_downloader"
-version = "2.9"
-description = "Download tracks and albums from Amazon Music"
+version = "2.10"
+authors = [ { name="alcts", email="all_clients@alcts.xyz" } ]
 requires-python = ">=3.13"
+description = "Download tracks, albums, playlists, and artists from Amazon Music"
+readme = "README.md"
+license = "MIT"
