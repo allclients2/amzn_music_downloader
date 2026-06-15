@@ -58,7 +58,7 @@ CREDENTIALS_FILE = CONFIG_DIR / "credentials.bin"
 DEFAULT_CONFIG = {
     "config": {
         "default_quality": "HD",
-        "default_output": "~/Music/amzdl",
+        "default_output": "~/Music/amzdl-output",
         "default_wvd_path": "device.wvd",
         "default_account": "",
         "default_concurrency": 5,
