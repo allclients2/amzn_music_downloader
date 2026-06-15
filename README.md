@@ -327,8 +327,8 @@ For a full traceback on unexpected errors, re-run with `-v`.
 
 ## Special thanks to
 
-- **[orpheusdl-amazonmusic](https://github.com/bascurtiz/orpheusdl-amazonmusic)** by
-  **bascurtiz** — the Amazon Music mobile API client this project is built on, vendored as
+- **[orpheusdl-amazonmusic](https://github.com/bascurtiz/orpheusdl-amazonmusic)** published by
+  **bascurtiz** (originally created by [yuinachan](https://github.com/yuinachan)) — the Amazon Music mobile API client this project is built on, vendored as
   the `src/amazonmusic/` git submodule (RSA request signing, device registration, the
   multi-region endpoints).
 - **[ffmpeg](https://ffmpeg.org/)** — stream-copies every decrypted track into its native
