@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from amazonmusic.azapi import AmazonMusicMobileAPI
 
-from metadata.metadata import ArtistMetadata
+from amzdl.metadata.metadata import ArtistMetadata
 
 # Album ASINs are discovered from the artist's catalog pages (`get_page`), never
 # from textsearch. The page payload models each album as a dict tagged with a

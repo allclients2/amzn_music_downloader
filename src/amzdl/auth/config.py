@@ -1,10 +1,14 @@
 """Persistent configuration for the downloader.
 
-On first use a `config/` folder is created at the repo root (the program is always
-run from the root) holding:
+On first use a `config/` folder is created (see `CONFIG_DIR` for where) holding:
 
   - `config.json`     — user-editable defaults (quality, output dir, wvd path)
   - `credentials.bin` — pickled per-account Amazon Music logins (written by `auth`)
+
+`CONFIG_DIR` resolves a `config/` folder in the current working directory when one
+exists (the repo-root dev layout); otherwise it falls back to a per-user base dir
+(`$AMZDL_CONFIG_DIR`, else `$XDG_CONFIG_HOME/amzdl`, else `~/.config/amzdl`), so the
+tool works both from a repo checkout and as a system-wide install.
 
 The `accounts` table is the registry of signed-in accounts, keyed by the account's
 `customer_id` (the stable, unique Amazon account identifier). Each entry mirrors the
@@ -27,16 +31,34 @@ requested explicitly.
 
 import copy
 import json
+import os
 from pathlib import Path
 
-CONFIG_DIR = Path("config")
+
+def _resolve_config_dir() -> Path:
+    """A `config/` folder in the current working directory wins (the repo-root dev
+    layout); otherwise a per-user base dir: `$AMZDL_CONFIG_DIR`, else
+    `$XDG_CONFIG_HOME/amzdl`, else `~/.config/amzdl`."""
+    cwd_config = Path("config")
+    if cwd_config.is_dir():
+        return cwd_config
+    override = os.environ.get("AMZDL_CONFIG_DIR")
+    if override:
+        return Path(override).expanduser()
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg).expanduser() / "amzdl"
+    return Path.home() / ".config" / "amzdl"
+
+
+CONFIG_DIR = _resolve_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 CREDENTIALS_FILE = CONFIG_DIR / "credentials.bin"
 
 DEFAULT_CONFIG = {
     "config": {
         "default_quality": "HD",
-        "default_output": "output",
+        "default_output": "~/Music/amzdl",
         "default_wvd_path": "device.wvd",
         "default_account": "",
         "default_concurrency": 5,
@@ -99,6 +121,18 @@ def get_settings() -> dict:
     default_account / default_concurrency / default_metadata_concurrency /
     use_link_hints."""
     return load_config()["config"]
+
+
+def resolve_wvd_path(override: str | None = None) -> Path:
+    """Resolve the Widevine device file. An explicit `override` (`--wvd-path`) wins;
+    otherwise the configured `default_wvd_path` is used when it exists (typically
+    `device.wvd` in the working directory), falling back to `CONFIG_DIR/device.wvd`."""
+    if override:
+        return Path(override).expanduser()
+    configured = Path(get_settings()["default_wvd_path"]).expanduser()
+    if configured.exists():
+        return configured
+    return CONFIG_DIR / "device.wvd"
 
 
 def load_accounts() -> dict:

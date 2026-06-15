@@ -27,13 +27,13 @@ import requests
 
 _log = logging.getLogger("downloader.track")
 
-from process.keys import Keys
-from process.decrypt import decrypt_mp4
-from process.lyrics import Lyrics
-from process.tagging import tag_track, download_artwork
-from metadata.metadata import TrackMetadata, resolve_track_cover
-from metadata.mpd_info import find_representation, _AUDIO_EXTENSIONS
-from util import safe_filename, build_output_filename
+from amzdl.process.keys import Keys
+from amzdl.process.decrypt import decrypt_mp4
+from amzdl.process.lyrics import Lyrics
+from amzdl.process.tagging import tag_track, download_artwork
+from amzdl.metadata.metadata import TrackMetadata, resolve_track_cover
+from amzdl.metadata.mpd_info import find_representation, _AUDIO_EXTENSIONS
+from amzdl.util import safe_filename, build_output_filename
 
 # Shared scratch directory (under the output dir) for per-track encrypted /
 # decrypted / remuxed files; each track works in its own subdir inside it.

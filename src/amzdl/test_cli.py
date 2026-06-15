@@ -23,9 +23,9 @@ import random
 import sys
 import tempfile
 
-import main
-from process import download
-from metadata.metadata import AlbumMetadata, ArtistMetadata, PlaylistMetadata, TrackMetadata
+from amzdl import main
+from amzdl.process import download
+from amzdl.metadata.metadata import AlbumMetadata, ArtistMetadata, PlaylistMetadata, TrackMetadata
 
 # Made-up ASINs; nothing is ever sent anywhere.
 _FAKE_TRACK_ASIN = "B0FAKETRACK"

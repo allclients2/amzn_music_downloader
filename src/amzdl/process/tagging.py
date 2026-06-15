@@ -13,7 +13,7 @@ import tempfile
 import requests
 from mutagen.flac import FLAC, Picture
 
-from metadata.metadata import TrackMetadata
+from amzdl.metadata.metadata import TrackMetadata
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

@@ -23,10 +23,10 @@ is shared by the artist path and the artist case of `_resolve_to_tracks`.
 
 import asyncio
 
-from cli import ui
-from cli.progress import Progress
-from process.fetch_track import fetch_track, process_track, purge_temp_dir
-from metadata.metadata import (
+from amzdl.cli import ui
+from amzdl.cli.progress import Progress
+from amzdl.process.fetch_track import fetch_track, process_track, purge_temp_dir
+from amzdl.metadata.metadata import (
     _BATCH_SIZE,
     _build_track,
     _disc_total,
@@ -35,7 +35,7 @@ from metadata.metadata import (
     fetch_metadata,
     fetch_meta_chunk,
 )
-from metadata.mpd_info import fetch_representations, select_representation
+from amzdl.metadata.mpd_info import fetch_representations, select_representation
 
 
 def _note_skipped(results):

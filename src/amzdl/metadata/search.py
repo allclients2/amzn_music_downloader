@@ -18,7 +18,7 @@ names itself in `title`, but an **artist** document uses `name` (and carries no
 from dataclasses import dataclass
 from typing import List, Tuple
 
-from auth.amzn_api import AmazonMusicMobileAPI
+from amzdl.auth.amzn_api import AmazonMusicMobileAPI
 
 # Display label -> textsearch catalog type. Order is the menu/listing order.
 SEARCH_TYPES = {

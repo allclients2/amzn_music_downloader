@@ -14,6 +14,9 @@ output
 .vscode
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
 *.bin
 credentials.bin
 .DS_Store

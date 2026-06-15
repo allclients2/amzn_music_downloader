@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from amazonmusic.azapi import AmazonMusicMobileAPI
 
-from metadata.metadata import (
+from amzdl.metadata.metadata import (
     PlaylistMetadata,
     TrackMetadata,
     _build_track,

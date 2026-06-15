@@ -56,14 +56,15 @@ You need three things that **cannot** be installed via `pip`:
 | Requirement | What it is | How to get it |
 |---|---|---|
 | **`ffmpeg`** | Remuxes the decrypted stream into a `.flac` container | [ffmpeg.org](https://ffmpeg.org/download.html) — must be on `PATH` |
-| **`device.wvd`** | A provisioned **Widevine** device file used for license/decryption | Provide your own; place it in the working directory (gitignored, never in the repo) |
+| **`device.wvd`** | A provisioned **Widevine** device file used for license/decryption | Provide your own; place it in the working directory or your config dir (gitignored, never in the repo) |
 
-Plus **Python ≥ 3.11** (developed and tested on 3.13).
+Plus **Python ≥ 3.10** (developed and tested on 3.13).
 
 > [!IMPORTANT]
-> Without a valid `device.wvd`, decryption fails and the tool exits early. Its
-> location defaults to `device.wvd` in the working directory and can be overridden
-> with `--wvd-path` or the `default_wvd_path` config key.
+> Without a valid `device.wvd`, decryption fails and the tool exits early. It is
+> looked for as `device.wvd` in the working directory first, then in the config dir
+> (`~/.config/amzdl/device.wvd`); override with `--wvd-path` or the `default_wvd_path`
+> config key.
 
 ---
 
@@ -81,9 +82,12 @@ git submodule update --init --recursive
 ```
 
 > [!NOTE]
-> Everything is run **from the repo root** (e.g. `python src/main.py …`), not via
-> `python -m`. This is what makes the flat imports and the `amazonmusic` package
-> resolve, and what anchors `device.wvd` / `config/` to the repo root.
+> Installing the project (below) puts an **`amzdl`** command on your `PATH`, so it
+> runs from anywhere. It uses a `config/` folder in the **current working directory**
+> when one exists (the repo-root dev layout), otherwise a per-user dir
+> (`$AMZDL_CONFIG_DIR`, else `$XDG_CONFIG_HOME/amzdl`, else `~/.config/amzdl`).
+> `device.wvd` is resolved the same way: the working directory first, then the config
+> dir. Downloads default to `~/Music/amzdl` (override with `--output`).
 
 ### Setup with `uv` (recommended)
 
@@ -99,23 +103,28 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Then create an environment and install dependencies:
+Then install the project — `uv sync` creates `.venv`, installs the dependencies
+(declared in `pyproject.toml`), and installs the `amzdl` console script:
 
 ```bash
-uv venv --python 3.13
-
-uv pip install -r requirements.txt
-uv pip install -r src/amazonmusic/requirements.txt
+uv sync
 
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-python src/main.py --version
+amzdl --version
+```
+
+To put `amzdl` on your `PATH` so it runs from anywhere, install it as a tool:
+
+```bash
+uv tool install --from . amzdl   # or: pipx install .
 ```
 
 > [!NOTE]
-> Prefer the standard tooling? A plain `python3 -m venv .venv` + `pip install -r
-> requirements.txt` (and `-r src/amazonmusic/requirements.txt`) works just as well —
-> `uv` is only a faster convenience.
+> Prefer the standard tooling? A plain `python3 -m venv .venv` + `pip install .`
+> (or `pip install -e .` for an editable checkout) works just as well — `uv` is only
+> a faster convenience. Either way the dependencies come from `pyproject.toml`; there
+> is no separate `requirements.txt` to install.
 
 ## First run & authentication
 
@@ -138,7 +147,7 @@ be stored side by side.
 ### Downloading
 
 ```text
-usage: main.py [-h] [--version] [--account ACCOUNT] [--output OUTPUT] [-v] [--quality TIER] [--wvd-path WVD_PATH]
+usage: amzdl [-h] [--version] [--account ACCOUNT] [--output OUTPUT] [-v] [--quality TIER] [--wvd-path WVD_PATH]
                [--metadata-concurrency N]
                INPUT
 ```
@@ -158,22 +167,22 @@ usage: main.py [-h] [--version] [--account ACCOUNT] [--output OUTPUT] [-v] [--qu
 
 ```bash
 # Download a track or album to ./downloads at HD (CD-quality FLAC)
-python src/main.py B07JZ7PW6F --output downloads --quality HD
+amzdl B07JZ7PW6F --output downloads --quality HD
 
 # A link — any region domain works; a trackAsin= picks just that one track
-python src/main.py 'https://music.amazon.com/albums/B07JZ7PW6F?trackAsin=B07JZ8XYZ1'
+amzdl 'https://music.amazon.com/albums/B07JZ7PW6F?trackAsin=B07JZ8XYZ1'
 
 # An artist's whole discography, or a playlist (catalog or your library)
-python src/main.py B07JARTIST0
+amzdl B07JARTIST0
 
 # A text file of ASINs/links (one per line) — downloaded as a single batch
-python src/main.py tracks.txt
+amzdl tracks.txt
 
 # Hi-res download with a specific account, verbose
-python src/main.py B07JZ7PW6F --quality UHD --account US -v
+amzdl B07JZ7PW6F --quality UHD --account US -v
 
 # Dolby Atmos (spatial) — falls back to the best FLAC if the track has no Atmos
-python src/main.py B07JZ7PW6F --quality SPATIAL_ATMOS
+amzdl B07JZ7PW6F --quality SPATIAL_ATMOS
 ```
 
 Downloads are **idempotent** — existing output files are skipped, so re-running an
@@ -189,11 +198,11 @@ type the download pipeline handles is searchable — `track`, `album`, `artist` 
 discography), or `playlist`. Omitted query / `--type` are prompted for.
 
 ```bash
-python src/main.py search "some name" --type track
-python src/main.py search --type album              # prompts for the query
-python src/main.py search "some name" --type artist  # whole discography
-python src/main.py search                            # prompts for both
-python src/main.py search x --type track --search-limit 10
+amzdl search "some name" --type track
+amzdl search --type album              # prompts for the query
+amzdl search "some name" --type artist  # whole discography
+amzdl search                            # prompts for both
+amzdl search x --type track --search-limit 10
 ```
 
 `--search-limit` caps how many hits are shown (default: config `default_search_limit`).
@@ -206,7 +215,7 @@ The download flags above (`--account` / `--output` / `--quality` / `--wvd-path` 
 `A` to add, `Q` to quit:
 
 ```bash
-python src/main.py accounts
+amzdl accounts
 ```
 
 **Direct commands** — add or remove without the menu (`account` and `accounts` are
@@ -214,10 +223,10 @@ aliases; either spelling works with the menu or these flags):
 
 ```bash
 # Add an account for a given region (omit the code to be prompted)
-python src/main.py accounts --add US
+amzdl accounts --add US
 
 # Remove a stored account by customer id, name, or country code
-python src/main.py accounts --delete US
+amzdl accounts --delete US
 ```
 
 Account selection precedence when downloading: `--account` → config
@@ -259,7 +268,10 @@ container; if the track has no such stream it falls back to the best FLAC.
 
 ## Configuration
 
-On first run a `config/` folder is generated at the repo root containing:
+On first run a `config/` folder is generated — in the current working directory if a
+`config/` already exists there (the repo-root dev layout), otherwise in a per-user dir
+(`$AMZDL_CONFIG_DIR`, else `$XDG_CONFIG_HOME/amzdl`, else `~/.config/amzdl`) —
+containing:
 
 - **`config.json`** — defaults plus the account registry:
   - `default_quality`, `default_output`, `default_wvd_path` — the per-run defaults the matching flags override
@@ -300,14 +312,16 @@ read line by line), then each track runs through a sequence of signed calls:
 | **Decryption** | `getLicenseForPlaybackV2` | Drives a `pywidevine` challenge with the web `TRACK_PSSH`; the content key feeds the in-process CENC (AES-CTR) decryptor, then `ffmpeg -c copy` remuxes to `.flac` |
 | **Lyrics** | `getLyricsByTrackAsinBatch` | Time-synced lyrics → embedded `LYRICS` tag + sidecar `.lrc` |
 
-The `src/` modules are a thin orchestration layer over a single signed session,
-grouped by concern: `cli/` (UI, prompts, progress), `metadata/` (resolving links,
-metadata, discography, playlists, the DASH manifest, search), `process/` (download,
-decrypt, tagging, keys, lyrics), and `auth/` (auth, config, the API subclass).
+The `amzdl` package (under `src/amzdl/`) is a thin orchestration layer over a single
+signed session, grouped by concern: `cli/` (UI, prompts, progress), `metadata/`
+(resolving links, metadata, discography, playlists, the DASH manifest, search),
+`process/` (download, decrypt, tagging, keys, lyrics), and `auth/` (auth, config, the
+API subclass).
 
-The upstream API client is tracked as a **read-only git submodule**; the project's
-only local patches live in a thin subclass at `src/auth/amzn_api.py`. Pull upstream
-fixes with `git submodule update --remote`.
+The upstream API client is tracked as a **read-only git submodule** (a sibling
+package at `src/amazonmusic/`); the project's only local patches live in a thin
+subclass at `src/amzdl/auth/amzn_api.py`. Pull upstream fixes with
+`git submodule update --remote`.
 
 ---
 
@@ -319,7 +333,8 @@ fixes with `git submodule update --remote`.
 | `Failed to get license: 400 … DEVICE_NOT_ELIGIBLE` (`ForbiddenException`) | Your `device.wvd` is invalid or has been revoked — Amazon won't issue a license to it. Provision a fresh, eligible Widevine device file and point `--wvd-path` / `default_wvd_path` at it. |
 | `ImportError` for `amazonmusic` | Submodule not fetched — run `git submodule update --init --recursive`. |
 | `ffmpeg` not found | Not on `PATH` — install it and reopen your shell. |
-| Imports fail when running the script | You ran it from somewhere other than the repo root — `cd` to the repo root and run `python src/main.py …`. |
+| `amzdl: command not found` | The project isn't installed in the active environment — run `uv sync` (and activate `.venv`), or `uv tool install --from . amzdl` to put it on your `PATH`. |
+| `Widevine device not found` despite having one | `device.wvd` is looked for in the working directory first, then the config dir (`~/.config/amzdl/device.wvd`) — put it in one of those or pass `--wvd-path`. |
 
 For a full traceback on unexpected errors, re-run with `-v`.
 

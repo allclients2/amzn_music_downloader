@@ -35,8 +35,8 @@ import re
 import shutil
 import sys
 
-from _version import VERSION
-from util import disp_width
+from amzdl._version import VERSION
+from amzdl.util import disp_width
 
 
 def _enable_windows_ansi() -> None:

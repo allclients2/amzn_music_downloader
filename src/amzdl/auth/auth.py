@@ -16,10 +16,10 @@ import os
 import pickle
 from pathlib import Path
 
-from auth import config
-from auth.amzn_api import AmazonMusicMobileAPI
-from cli import prompts
-from cli import ui
+from amzdl.auth import config
+from amzdl.auth.amzn_api import AmazonMusicMobileAPI
+from amzdl.cli import prompts
+from amzdl.cli import ui
 from amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
     AmazonRegion,

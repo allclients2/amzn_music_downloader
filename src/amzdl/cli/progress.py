@@ -3,10 +3,10 @@ import sys
 import threading
 import time
 
-from cli import ui
-from cli.ui import paint as _paint
-from cli.ui import FAINT as _FAINT, GREY as _GREY, YELLOW as _YELLOW, GREEN as _GREEN
-from util import (
+from amzdl.cli import ui
+from amzdl.cli.ui import paint as _paint
+from amzdl.cli.ui import FAINT as _FAINT, GREY as _GREY, YELLOW as _YELLOW, GREEN as _GREEN
+from amzdl.util import (
     disp_width as _disp_width,
     fixed as _fixed,
     take_cols as _take_cols,

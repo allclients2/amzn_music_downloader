@@ -3,14 +3,14 @@ import asyncio
 import sys
 from pathlib import Path
 
-from auth import auth
-from auth import config
-from cli import prompts
-from cli import ui
-from process.download import download, download_batch
-from metadata import links
-from metadata.search import SEARCH_TYPES, normalize_type, search_catalog
-from _version import VERSION
+from amzdl.auth import auth
+from amzdl.auth import config
+from amzdl.cli import prompts
+from amzdl.cli import ui
+from amzdl.process.download import download, download_batch
+from amzdl.metadata import links
+from amzdl.metadata.search import SEARCH_TYPES, normalize_type, search_catalog
+from amzdl._version import VERSION
 
 
 def _add_download_args(parser):
@@ -59,7 +59,7 @@ def _add_download_args(parser):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=ui.paint(f"downloader v{VERSION}", ui.CYAN),
-        epilog="Manage accounts: `python src/main.py accounts`",
+        epilog="Manage accounts: `amzdl accounts`",
     )
 
     parser.add_argument(
@@ -81,7 +81,7 @@ def parse_args(argv=None):
 
 def parse_search_args(argv):
     parser = argparse.ArgumentParser(
-        prog="main.py search",
+        prog="amzdl search",
         description=ui.paint(f"downloader v{VERSION} — search", ui.CYAN),
     )
     parser.add_argument(
@@ -112,8 +112,8 @@ async def run_search(args):
 
     settings = config.get_settings()
     quality = args.quality or settings["default_quality"]
-    wvd_path = args.wvd_path or settings["default_wvd_path"]
-    output_dir = Path(args.output or settings["default_output"])
+    wvd_path = config.resolve_wvd_path(args.wvd_path)
+    output_dir = Path(args.output or settings["default_output"]).expanduser()
     concurrency = settings["default_concurrency"]
     metadata_concurrency = args.metadata_concurrency or settings["default_metadata_concurrency"]
     limit = args.search_limit or settings["default_search_limit"]
@@ -163,8 +163,8 @@ async def run_download(args):
     # CLI flags override the stored config defaults (generated on first run).
     settings = config.get_settings()
     quality = args.quality or settings["default_quality"]
-    wvd_path = args.wvd_path or settings["default_wvd_path"]
-    output_dir = Path(args.output or settings["default_output"])
+    wvd_path = config.resolve_wvd_path(args.wvd_path)
+    output_dir = Path(args.output or settings["default_output"]).expanduser()
     concurrency = settings["default_concurrency"]
     metadata_concurrency = args.metadata_concurrency or settings["default_metadata_concurrency"]
 
@@ -240,7 +240,7 @@ def _add_account(country=None):
 
 
 def run_accounts(argv):
-    """`python src/main.py accounts` (alias: `account`) — account manager. With no
+    """`amzdl accounts` (alias: `account`) — account manager. With no
     flags it runs the interactive menu: lists stored accounts, selecting one prompts
     (in red) to remove it, `A` adds a new account, `Q` quits.
 
@@ -248,7 +248,7 @@ def run_accounts(argv):
     direct add/delete action."""
     if argv:
         parser = argparse.ArgumentParser(
-            prog="main.py accounts",
+            prog="amzdl accounts",
             description="Add or remove an Amazon Music account.",
         )
         parser.add_argument(

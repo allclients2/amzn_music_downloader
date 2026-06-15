@@ -7,10 +7,10 @@ screens. Each helper first rewinds over whatever the previous screen printed (vi
 animated download bar in `progress.py` follows the same convention.
 """
 
-from cli import ui
-from cli.ui import paint, faint, header
-from cli.ui import RED, YELLOW, MARK_TEE, MARK_CLOSE
-from cli.terminal import read_long_line
+from amzdl.cli import ui
+from amzdl.cli.ui import paint, faint, header
+from amzdl.cli.ui import RED, YELLOW, MARK_TEE, MARK_CLOSE
+from amzdl.cli.terminal import read_long_line
 
 
 # ── account screens ───────────────────────────────────────────────────────────
