@@ -186,14 +186,14 @@ bad album in a discography) is skipped, not fatal.
 
 Don't have an ASIN or link? Search the catalog and pick a result to download. Any
 type the download pipeline handles is searchable — `track`, `album`, `artist` (whole
-discography), or `playlist`. Omitted `--query` / `--type` are prompted for.
+discography), or `playlist`. Omitted query / `--type` are prompted for.
 
 ```bash
-python src/main.py search --query "some name" --type track
-python src/main.py search --type album                       # prompts for the query
-python src/main.py search --query "some name" --type artist  # whole discography
-python src/main.py search                                    # prompts for both
-python src/main.py search --query x --type track --search-limit 10
+python src/main.py search "some name" --type track
+python src/main.py search --type album              # prompts for the query
+python src/main.py search "some name" --type artist  # whole discography
+python src/main.py search                            # prompts for both
+python src/main.py search x --type track --search-limit 10
 ```
 
 `--search-limit` caps how many hits are shown (default: config `default_search_limit`).

@@ -85,7 +85,8 @@ def parse_search_args(argv):
         description=ui.paint(f"downloader v{VERSION} — search", ui.CYAN),
     )
     parser.add_argument(
-        "--query",
+        "query",
+        nargs="?",
         default=None,
         help="Search text (prompted for if omitted)",
     )
