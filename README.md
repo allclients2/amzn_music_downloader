@@ -1,4 +1,4 @@
-# amzn_music_downloader
+# amzdl
 
 ![Downloading an album](./assets/image.png)
 

@@ -9,7 +9,7 @@ import re
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-_DIST_NAME = "amzn_music_downloader"
+_DIST_NAME = "amzdl"
 
 
 def _from_pyproject() -> str:

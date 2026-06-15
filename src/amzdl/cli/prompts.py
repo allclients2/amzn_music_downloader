@@ -25,7 +25,7 @@ def _account_row(name: str, region: str, index: int | None = None,
 def prompt_region(title: str = "Add account") -> str:
     """Render the region screen and read the 2-letter code:
 
-        │ downloader vX | Add account
+        │ amzdl vX | Add account
         ╰ Region code (e.g. US):
     """
     ui._erase_pending()
@@ -38,7 +38,7 @@ def prompt_account(options: list[tuple[str, str]]) -> int | None:
     for "Add". `options` is a list of ``(name, region)`` pairs. Re-prompts on
     invalid input:
 
-        │ downloader vX | Select account
+        │ amzdl vX | Select account
         ├ [1] Whoever — Japan
         ├ [2] test@example.com — United States of America
         ╰ Select [1-2], or A to Add:
@@ -62,7 +62,7 @@ def prompt_manage_account(options: list[tuple[str, str]]) -> int | str:
     ``"add"`` to sign in to a new account, or ``"quit"`` to exit. `options` is a
     list of ``(name, region)`` pairs. Re-prompts on invalid input:
 
-        │ downloader vX | Manage accounts
+        │ amzdl vX | Manage accounts
         ├ [1] Whoever — Japan
         ├ [2] test@example.com — United States of America
         ╰ Select [1-2] to remove, A to add, or Q to quit:
@@ -86,7 +86,7 @@ def prompt_manage_account(options: list[tuple[str, str]]) -> int | str:
 def confirm_delete(name: str, region: str) -> bool:
     """Render the removal confirmation (in red) and return whether to proceed:
 
-        │ downloader vX | Remove account
+        │ amzdl vX | Remove account
         ╰ Permanently remove name — region? [y/N]:
     """
     ui._erase_pending()
@@ -99,7 +99,7 @@ def confirm_delete(name: str, region: str) -> bool:
 def prompt_oauth_url(app_title: str, url: str) -> str:
     """Render the browser sign-in screen and read the pasted post-login URL:
 
-        │ downloader vX | Sign-in: Amazon Music (US)
+        │ amzdl vX | Sign-in: Amazon Music (US)
         ├ 1. Open this URL: <url>
         ├ 2. After signing in you'll land on a blank / 'page not found' page.
         ├ 3. Copy that page's FULL URL from the address bar and paste it below.
@@ -142,7 +142,7 @@ def _search_title(type_label: str | None) -> str:
 def prompt_search_query(type_label: str | None = None) -> str:
     """Render the query screen and read the search text:
 
-        │ downloader vX | Search tracks
+        │ amzdl vX | Search tracks
         ╰ Enter query:
     """
     ui._erase_pending()
@@ -154,7 +154,7 @@ def prompt_search_type(types: tuple[str, ...]) -> str:
     """Render the type screen and read a valid search type. Re-prompts on
     unrecognised input. `types` is the tuple of selectable type labels:
 
-        │ downloader vX | Search
+        │ amzdl vX | Search
         ╰ Search type (track, album, etc.):
     """
     ui._erase_pending()
@@ -181,7 +181,7 @@ def prompt_search_results(
     """Render the results picker and return the chosen 0-based index, or None to
     quit. `rows` is a list of display-column tuples. Re-prompts on invalid input:
 
-        │ downloader vX | Search tracks
+        │ amzdl vX | Search tracks
         ├ [1] Track Name - Album Name - Artist Name
         ├ [2] Track Name - Album Name - Artist Name
         ╰ Select [1-2] to download, or Q to quit:

@@ -58,7 +58,7 @@ def _add_download_args(parser):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description=ui.paint(f"downloader v{VERSION}", ui.CYAN),
+        description=ui.paint(f"amzdl v{VERSION}", ui.CYAN),
         epilog="Manage accounts: `amzdl accounts`",
     )
 
@@ -72,7 +72,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--version",
         action="version",
-        version=f"downloader v{VERSION}",
+        version=f"amzdl v{VERSION}",
     )
     _add_download_args(parser)
 
@@ -82,7 +82,7 @@ def parse_args(argv=None):
 def parse_search_args(argv):
     parser = argparse.ArgumentParser(
         prog="amzdl search",
-        description=ui.paint(f"downloader v{VERSION} — search", ui.CYAN),
+        description=ui.paint(f"amzdl v{VERSION} — search", ui.CYAN),
     )
     parser.add_argument(
         "query",

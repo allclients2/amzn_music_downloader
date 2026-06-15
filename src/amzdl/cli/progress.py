@@ -266,7 +266,7 @@ class Progress:
         """Header track/album name: marquee while running, truncate when done."""
         if not self.name:
             return ""
-        # Columns left after "│ downloader vX │ <asin> │ " (each " | " is 3 cols).
+        # Columns left after "│ amzdl vX │ <asin> │ " (each " | " is 3 cols).
         prefix_w = 2 + _disp_width(_BRAND_TEXT) + 3 + _disp_width(self.asin) + 3
         avail = term_w - prefix_w
         return _truncate(self.name, avail) if self.done else self._marquee(self.name, avail)

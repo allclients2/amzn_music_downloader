@@ -2,7 +2,7 @@
 
 Every interactive surface (the download progress bar, the account selector, the
 `login` prompts, the OAuth paste screen, error messages) shares one visual
-language: a faint-grey "tree" of connectors (``│ ├ ╰``), a cyan ``downloader vX``
+language: a faint-grey "tree" of connectors (``│ ├ ╰``), a cyan ``amzdl vX``
 brand, a faint-grey-bold ``|`` separator, and a few semantic accents (green
 ``done`` in `progress.py`, red ``×`` for errors).
 
@@ -89,7 +89,7 @@ def faint(text: str) -> str:
 
 
 # ── brand + tree connectors ─────────────────────────────────────────────────
-BRAND_TEXT = f"downloader v{VERSION}"   # raw (for width math); BRAND is the painted form
+BRAND_TEXT = f"amzdl v{VERSION}"   # raw (for width math); BRAND is the painted form
 
 BRAND = paint(BRAND_TEXT, CYAN)
 SEP = paint("|", FAINT, GREY, BOLD)     # header separator, rendered as f" {SEP} "
@@ -100,7 +100,7 @@ MARK_CLOSE = paint("╰", FAINT, GREY, BOLD)  # the closing/last line of a block
 
 
 def header(*parts: str) -> str:
-    """The header line: ``│ downloader vX | part | part…``.
+    """The header line: ``│ amzdl vX | part | part…``.
 
     `parts` are subtitle segments (e.g. "Select account") appended in normal
     white, matching the title slot of `progress.py`'s header.
@@ -337,7 +337,7 @@ class _BarAwareHandler(logging.StreamHandler):
 def setup_logging(verbose: bool) -> None:
     """Install the bar-aware handler on the root logger (replaces `basicConfig`).
 
-    All records — the project's `downloader.*` loggers plus any third-party
+    All records — the project's `amzdl.*` loggers plus any third-party
     (pywidevine/urllib3/asyncio) loggers that propagate to root — flow through one
     handler. On an interactive (non-verbose, TTY) run they collect in the sticky
     footer; verbose or piped runs stream them to stderr live instead."""
@@ -408,7 +408,7 @@ def error(text: str) -> None:
 def print_error(message: str) -> None:
     """Render the error screen, with any accumulated footer alerts beneath it:
 
-        │ downloader vX | Error
+        │ amzdl vX | Error
         ╰ × <message>
     """
     _erase_pending()

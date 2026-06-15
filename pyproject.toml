@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "amzn_music_downloader"
-version = "2.10"
+name = "amzdl"
+version = "2.10.1"
 authors = [ { name="alcts", email="all_clients@alcts.xyz" } ]
 requires-python = ">=3.10"
 description = "Download tracks, albums, playlists, and artists from Amazon Music"
