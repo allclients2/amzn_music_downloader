@@ -143,6 +143,9 @@ uv run pre-commit install            # install the git hook
 uv run pre-commit run --all-files    # optional: run against the whole tree now
 ```
 
+**Comment-policy**: Comments and docstrings should only be at the top of the file.
+This is checked via a pre-commit hook.
+
 After this, `git commit` lints (and auto-fixes) your changes automatically; a commit
 is blocked if anything still fails.
 

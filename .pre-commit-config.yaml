@@ -5,3 +5,12 @@ repos:
       - id: ruff
         name: ruff (lint)
         args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: top-of-file-comments
+        name: documentation only at top of file (policy)
+        entry: python tools/check_comments.py
+        language: python
+        types: [python]
+        exclude: ^src/amazonmusic/
