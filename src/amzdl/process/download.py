@@ -4,17 +4,17 @@ import asyncio
 
 from amzdl.cli import ui
 from amzdl.cli.progress import Progress
-from amzdl.process.fetch_track import fetch_track, process_track, purge_temp_dir
 from amzdl.metadata.metadata import (
     _BATCH_SIZE,
     _build_track,
     _disc_total,
     _fetch_album_data,
     _hi_res_cover,
-    fetch_metadata,
     fetch_meta_chunk,
+    fetch_metadata,
 )
 from amzdl.metadata.mpd_info import fetch_representations, select_representation
+from amzdl.process.fetch_track import fetch_track, process_track, purge_temp_dir
 
 
 def _note_skipped(results):

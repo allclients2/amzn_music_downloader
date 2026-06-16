@@ -7,8 +7,13 @@ import sys
 import tempfile
 
 from amzdl import main
+from amzdl.metadata.metadata import (
+    AlbumMetadata,
+    ArtistMetadata,
+    PlaylistMetadata,
+    TrackMetadata,
+)
 from amzdl.process import download
-from amzdl.metadata.metadata import AlbumMetadata, ArtistMetadata, PlaylistMetadata, TrackMetadata
 
 _FAKE_TRACK_ASIN = "B0FAKETRACK"
 _FAKE_ALBUM_ASIN = "B0FAKEALBUM"
@@ -103,7 +108,7 @@ def _fake_playlist_metadata(session, asin, defer_track_cover=False, type_hint=No
     track_asins = [f"{asin}T{i:02d}" for i in range(1, n + 1)]
     tracks = [] if defer_playlist_tracks else [
         _make_track(a, title, track_number=i, total_tracks=n)
-        for i, (a, title) in enumerate(zip(track_asins, _ALBUM_TRACKS), start=1)
+        for i, (a, title) in enumerate(zip(track_asins, _ALBUM_TRACKS, strict=False), start=1)
     ]
     return "playlist", PlaylistMetadata(
         name="Fake Playlist: A Marquee Example Mix", asin=asin,
@@ -126,7 +131,7 @@ async def _fake_build_playlist_tracks(session, rich, albums, by_album, track_asi
                                       metadata_concurrency, on_album=None):
     n = len(track_asins)
     titles = (_ALBUM_TRACKS * (n // len(_ALBUM_TRACKS) + 1))[:n]
-    title_of = dict(zip(track_asins, titles))
+    title_of = dict(zip(track_asins, titles, strict=False))
     built = {}
     for members in by_album.values():
         await asyncio.sleep(0.3)

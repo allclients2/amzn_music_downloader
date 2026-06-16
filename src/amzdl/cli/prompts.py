@@ -1,9 +1,8 @@
 """Static CLI screens: account selection, login, region, and search pickers. Composes the palette and one-screen-at-a-time bookkeeping from `ui` into the interactive wizard screens."""
 
 from amzdl.cli import ui
-from amzdl.cli.ui import paint, faint, header
-from amzdl.cli.ui import RED, YELLOW, MARK_TEE, MARK_CLOSE
 from amzdl.cli.terminal import read_long_line
+from amzdl.cli.ui import MARK_CLOSE, MARK_TEE, RED, YELLOW, faint, header, paint
 
 
 def _account_row(name: str, region: str, index: int | None = None,

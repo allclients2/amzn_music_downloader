@@ -37,6 +37,7 @@ Built and tested on **Windows 11 (25H2)** and **macOS Tahoe (26.4.1)** with
 - [Requirements](#requirements)
 - [Setup](#setup)
   - [Setup with `uv` (recommended)](#setup-with-uv-recommended)
+  - [Development & linting](#development--linting)
 - [First run & authentication](#first-run--authentication)
 - [Usage](#usage)
   - [Downloading](#downloading)
@@ -125,6 +126,25 @@ uv tool install --from . amzdl   # or: pipx install .
 > (or `pip install -e .` for an editable checkout) works just as well — `uv` is only
 > a faster convenience. Either way the dependencies come from `pyproject.toml`; there
 > is no separate `requirements.txt` to install.
+
+### Development & linting
+
+Linting is handled by [**ruff**](https://docs.astral.sh/ruff/), configured under
+`[tool.ruff]` in `pyproject.toml` (the `src/amazonmusic/` submodule is excluded). It
+lives in the `dev` dependency group, installed alongside the project by `uv sync`:
+
+```bash
+uv run ruff check          # lint
+uv run ruff check --fix    # lint and auto-fix
+```
+
+```bash
+uv run pre-commit install            # install the git hook
+uv run pre-commit run --all-files    # optional: run against the whole tree now
+```
+
+After this, `git commit` lints (and auto-fixes) your changes automatically; a commit
+is blocked if anything still fails.
 
 ## First run & authentication
 

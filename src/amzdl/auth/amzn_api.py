@@ -6,7 +6,7 @@ import typing
 import amazonmusic.azapi as _az
 from amazonmusic.azapi import AmazonMusicMobileAPI as _BaseAPI
 
-_oauth_callback: "contextvars.ContextVar[typing.Optional[typing.Callable[[str, str], str]]]" = (
+_oauth_callback: "contextvars.ContextVar[typing.Callable[[str, str], str] | None]" = (
     contextvars.ContextVar("amzn_oauth_flow_callback", default=None)
 )
 

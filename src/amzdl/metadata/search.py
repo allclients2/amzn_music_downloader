@@ -1,7 +1,6 @@
 """Catalog search via the `textsearch` API. Resolves a free-text query to a short list of `SearchResult`s (track, album, artist, or playlist) whose chosen ASIN feeds straight into the normal download pipeline."""
 
 from dataclasses import dataclass
-from typing import List, Tuple
 
 from amzdl.auth.amzn_api import AmazonMusicMobileAPI
 
@@ -16,7 +15,7 @@ SEARCH_TYPES = {
 @dataclass
 class SearchResult:
     asin: str
-    fields: Tuple[str, ...]
+    fields: tuple[str, ...]
 
 
 def normalize_type(value: str) -> str:
@@ -30,7 +29,7 @@ def normalize_type(value: str) -> str:
     return norm
 
 
-def _fields(search_type: str, doc: dict) -> Tuple[str, ...]:
+def _fields(search_type: str, doc: dict) -> tuple[str, ...]:
     title = doc.get("title") or "?"
     artist = doc.get("artistName") or "?"
     if search_type == "track":
@@ -45,14 +44,14 @@ def _fields(search_type: str, doc: dict) -> Tuple[str, ...]:
 
 def search_catalog(
     session: AmazonMusicMobileAPI, query: str, search_type: str, limit: int
-) -> List[SearchResult]:
+) -> list[SearchResult]:
     label = SEARCH_TYPES[normalize_type(search_type)]
     region = session.credentials.account_region
     docs = session.search(
         query=query, search_types=(label,), limit=limit, region_to_use=region
     )
 
-    results: List[SearchResult] = []
+    results: list[SearchResult] = []
     for doc in docs or ():
         if not isinstance(doc, dict):
             continue

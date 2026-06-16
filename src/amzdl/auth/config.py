@@ -55,7 +55,7 @@ def load_config() -> dict:
         return _write_default()
 
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+        with open(CONFIG_FILE, encoding="utf-8") as fh:
             data = json.load(fh)
     except (json.JSONDecodeError, OSError) as exc:
         print(f"warning: could not read {CONFIG_FILE} ({exc}); using defaults.")

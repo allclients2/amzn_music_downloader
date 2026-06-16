@@ -1,16 +1,14 @@
 """Artist discography discovery via submodule endpoints (no catalog search). Harvests an artist's album ASINs from its `get_page("artist/<asin>")` catalog page and the `chronological-albums` shoveler into the `ArtistMetadata` the pipeline expands."""
 
-from typing import List, Optional
 
 from amazonmusic.azapi import AmazonMusicMobileAPI
-
 from amzdl.metadata.metadata import ArtistMetadata
 
 _ALBUM_TYPE_SUFFIX = "#Album"
 _ARTIST_PAGE_MAX_PAGES = 40
 
 
-def _find_next_token(obj) -> Optional[str]:
+def _find_next_token(obj) -> str | None:
     stack = [obj]
     while stack:
         cur = stack.pop()
@@ -26,7 +24,7 @@ def _find_next_token(obj) -> Optional[str]:
     return None
 
 
-def _collect_album_asins(obj, seen: set, ordered: List[str]) -> None:
+def _collect_album_asins(obj, seen: set, ordered: list[str]) -> None:
     if isinstance(obj, dict):
         if str(obj.get("__type", "")).endswith(_ALBUM_TYPE_SUFFIX) and obj.get("asin"):
             asin = str(obj["asin"])
@@ -41,9 +39,9 @@ def _collect_album_asins(obj, seen: set, ordered: List[str]) -> None:
             _collect_album_asins(item, seen, ordered)
 
 
-def _artist_album_asins(session: AmazonMusicMobileAPI, artist_asin: str) -> List[str]:
+def _artist_album_asins(session: AmazonMusicMobileAPI, artist_asin: str) -> list[str]:
     seen: set = set()
-    ordered: List[str] = []
+    ordered: list[str] = []
 
     try:
         _collect_album_asins(session.get_page(f"artist/{artist_asin}"), seen, ordered)

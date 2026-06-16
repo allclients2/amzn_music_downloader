@@ -150,7 +150,6 @@ def _parse_tfhd(buf, content_start, box_end):
 
 
 def _parse_trun(buf, content_start, box_end, default_size):
-    version = buf[content_start]
     flags = struct.unpack(">I", b"\x00" + buf[content_start + 1 : content_start + 4])[0]
     sample_count = struct.unpack(">I", buf[content_start + 4 : content_start + 8])[0]
     off = content_start + 8
@@ -255,7 +254,7 @@ def _process_traf(buf, traf_start, traf_content, traf_end, moof_start, iv_size, 
             pos += size
             sample_index += 1
 
-    for btype, box_start, b_content, b_end in _iter_boxes(buf, traf_content, traf_end):
+    for btype, box_start, b_content, _b_end in _iter_boxes(buf, traf_content, traf_end):
         if btype in _PROTECTION_BOXES:
             buf[box_start + 4 : box_start + 8] = b"free"
         elif btype in (b"sbgp", b"sgpd"):

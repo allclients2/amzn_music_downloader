@@ -9,15 +9,15 @@ from pathlib import Path
 
 import requests
 
-_log = logging.getLogger("downloader.track")
-
-from amzdl.process.keys import Keys
-from amzdl.process.decrypt import decrypt_mp4
-from amzdl.process.lyrics import Lyrics
-from amzdl.process.tagging import tag_track, download_artwork
 from amzdl.metadata.metadata import TrackMetadata, resolve_track_cover
-from amzdl.metadata.mpd_info import find_representation, _AUDIO_EXTENSIONS
-from amzdl.util import safe_filename, build_output_filename
+from amzdl.metadata.mpd_info import _AUDIO_EXTENSIONS, find_representation
+from amzdl.process.decrypt import decrypt_mp4
+from amzdl.process.keys import Keys
+from amzdl.process.lyrics import Lyrics
+from amzdl.process.tagging import download_artwork, tag_track
+from amzdl.util import build_output_filename, safe_filename
+
+_log = logging.getLogger("downloader.track")
 
 _TEMP_SUBDIR = ".downloader"
 

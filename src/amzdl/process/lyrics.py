@@ -1,18 +1,17 @@
 """Lyrics parsing for the music-xray-service response. Parses `get_track_lyrics()` into synced lines, falling back to any plain-text field for regions/tracks that return an unsynced-only payload."""
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 
 @dataclass
 class LyricsLine:
-    timestamp_ms: Optional[int]
+    timestamp_ms: int | None
     text: str
 
 
 @dataclass
 class Lyrics:
-    lines: List[LyricsLine]
+    lines: list[LyricsLine]
 
     @staticmethod
     def from_xray(resp: dict) -> "Lyrics":
@@ -21,7 +20,7 @@ class Lyrics:
         if isinstance(raw_lines, dict):
             raw_lines = list(raw_lines.values())
 
-        parsed: List[LyricsLine] = []
+        parsed: list[LyricsLine] = []
         for line in raw_lines if isinstance(raw_lines, list) else []:
             if not isinstance(line, dict):
                 continue
@@ -58,7 +57,7 @@ class Lyrics:
         return f"{minutes:02}:{seconds:02}.{hundredths:02}"
 
     def _has_synced(self) -> bool:
-        return any(l.timestamp_ms is not None for l in self.lines)
+        return any(line.timestamp_ms is not None for line in self.lines)
 
     def to_lrc(self) -> str:
         if not self._has_synced():

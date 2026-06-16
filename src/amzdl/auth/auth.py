@@ -4,14 +4,13 @@ import os
 import pickle
 from pathlib import Path
 
-from amzdl.auth import config
-from amzdl.auth.amzn_api import AmazonMusicMobileAPI
-from amzdl.cli import prompts
-from amzdl.cli import ui
 from amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
     AmazonRegion,
 )
+from amzdl.auth import config
+from amzdl.auth.amzn_api import AmazonMusicMobileAPI
+from amzdl.cli import prompts, ui
 
 
 class _CompatUnpickler(pickle.Unpickler):
@@ -197,7 +196,6 @@ def _select_credentials(
     if country_hint:
         creds = _account_for_country(store, country_hint)
         if creds is not None:
-            info = _account_info(creds)
             return creds
 
     default = (config.get_settings().get("default_account") or "").strip()

@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from amazonmusic.azapi import AmazonMusicMobileAPI
 
@@ -24,14 +24,14 @@ class TrackMetadata:
     total_discs: int
     duration_seconds: int
     is_explicit: bool
-    isrc: Optional[str] = None
-    popularity: Optional[int] = None
-    composers: Optional[str] = None
-    release_date: Optional[str] = None
-    copyright: Optional[str] = None
-    label: Optional[str] = None
-    genre: Optional[str] = None
-    cover_url: Optional[str] = None
+    isrc: str | None = None
+    popularity: int | None = None
+    composers: str | None = None
+    release_date: str | None = None
+    copyright: str | None = None
+    label: str | None = None
+    genre: str | None = None
+    cover_url: str | None = None
 
 
 @dataclass
@@ -39,42 +39,42 @@ class AlbumMetadata:
     album_name: str
     artist_name: str
     album_asin: str
-    cover_url: Optional[str]
-    release_date: Optional[str]
-    copyright: Optional[str]
-    label: Optional[str]
-    genre: Optional[str]
+    cover_url: str | None
+    release_date: str | None
+    copyright: str | None
+    label: str | None
+    genre: str | None
     track_count: int
     total_discs: int
-    tracks: List[TrackMetadata] = field(default_factory=list)
+    tracks: list[TrackMetadata] = field(default_factory=list)
 
 
 @dataclass
 class PlaylistMetadata:
     name: str
     asin: str
-    track_asins: List[str] = field(default_factory=list)
-    tracks: List[TrackMetadata] = field(default_factory=list)
+    track_asins: list[str] = field(default_factory=list)
+    tracks: list[TrackMetadata] = field(default_factory=list)
 
 
 @dataclass
 class ArtistMetadata:
     name: str
     asin: str
-    album_asins: List[str] = field(default_factory=list)
+    album_asins: list[str] = field(default_factory=list)
 
 
 _EXPLICITNESS_LABEL_RE = re.compile(r"\s*\[(?:explicit|clean)\]\s*$", re.IGNORECASE)
 
 
-def _strip_explicitness_label(name: Optional[str]) -> Optional[str]:
+def _strip_explicitness_label(name: str | None) -> str | None:
     if not name:
         return name
     stripped = _EXPLICITNESS_LABEL_RE.sub("", name).strip()
     return stripped or name
 
 
-def _ms_to_date(ms) -> Optional[str]:
+def _ms_to_date(ms) -> str | None:
     if ms in (None, "", 0):
         return None
     try:
@@ -83,7 +83,7 @@ def _ms_to_date(ms) -> Optional[str]:
         return None
 
 
-def _upgrade_cover(url: Optional[str]) -> Optional[str]:
+def _upgrade_cover(url: str | None) -> str | None:
     if not url:
         return url
     return re.sub(r"\._(S[XYL]|U[XY])\d+_", "._SL1200_", url)
@@ -93,9 +93,9 @@ def _search_cover(
     session: "AmazonMusicMobileAPI",
     artist: str,
     title: str,
-    asins: List[str],
-    fallback: Optional[str],
-) -> Optional[str]:
+    asins: list[str],
+    fallback: str | None,
+) -> str | None:
     asins = [a for a in asins if a]
     if not asins:
         return fallback
@@ -122,7 +122,7 @@ def _search_cover(
     return str(url) if url else fallback
 
 
-def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> Optional[str]:
+def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> str | None:
     return _search_cover(
         session,
         artist=(
@@ -141,7 +141,7 @@ def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> Optional
     )
 
 
-def resolve_track_cover(session: "AmazonMusicMobileAPI", track: "TrackMetadata") -> Optional[str]:
+def resolve_track_cover(session: "AmazonMusicMobileAPI", track: "TrackMetadata") -> str | None:
     return _search_cover(
         session,
         artist=track.album_artist or track.artist or "",
@@ -151,21 +151,21 @@ def resolve_track_cover(session: "AmazonMusicMobileAPI", track: "TrackMetadata")
     )
 
 
-def _composers(track_data: dict) -> Optional[str]:
+def _composers(track_data: dict) -> str | None:
     writers = [str(w).strip() for w in (track_data.get("songWriters") or []) if w]
     if not writers:
         return None
     return "; ".join(sorted(set(writers)))
 
 
-def _album_release_date(album_data: dict) -> Optional[str]:
+def _album_release_date(album_data: dict) -> str | None:
     return _ms_to_date(
         album_data.get("originalReleaseDate") or album_data.get("merchantReleaseDate")
     )
 
 
 def _build_track(
-    track_data: dict, album_data: dict, disc_total: int, cover_url: Optional[str]
+    track_data: dict, album_data: dict, disc_total: int, cover_url: str | None
 ) -> TrackMetadata:
     product = album_data.get("productDetails") or {}
     return TrackMetadata(
@@ -208,7 +208,7 @@ def _fetch_album_data(session: AmazonMusicMobileAPI, album_asin: str) -> dict:
     return albums[0]
 
 
-def _fetch_tracks(session: AmazonMusicMobileAPI, asins: List[str]) -> dict:
+def _fetch_tracks(session: AmazonMusicMobileAPI, asins: list[str]) -> dict:
     out: dict = {}
     for i in range(0, len(asins), _BATCH_SIZE):
         chunk = tuple(asins[i:i + _BATCH_SIZE])
@@ -220,8 +220,8 @@ def _fetch_tracks(session: AmazonMusicMobileAPI, asins: List[str]) -> dict:
 
 
 def fetch_meta_chunk(
-    session: AmazonMusicMobileAPI, asins: List[str]
-) -> Tuple[dict, dict]:
+    session: AmazonMusicMobileAPI, asins: list[str]
+) -> tuple[dict, dict]:
     resp = session.get_metadata(tuple(asins))
     tracks = {td["asin"]: td for td in (resp.get("trackList") or []) if td.get("asin")}
     albums = {ad["asin"]: ad for ad in (resp.get("albumList") or []) if ad.get("asin")}
@@ -229,8 +229,8 @@ def fetch_meta_chunk(
 
 
 def fetch_tracks_and_albums(
-    session: AmazonMusicMobileAPI, asins: List[str]
-) -> Tuple[dict, dict]:
+    session: AmazonMusicMobileAPI, asins: list[str]
+) -> tuple[dict, dict]:
     tracks: dict = {}
     albums: dict = {}
     for i in range(0, len(asins), _BATCH_SIZE):
@@ -254,8 +254,8 @@ def _resolve_playlist(
 
 def fetch_metadata(
     session: AmazonMusicMobileAPI, content_asin: str, defer_track_cover: bool = False,
-    type_hint: Optional[str] = None, defer_playlist_tracks: bool = False,
-) -> Tuple[str, object]:
+    type_hint: str | None = None, defer_playlist_tracks: bool = False,
+) -> tuple[str, object]:
     build_tracks = not defer_playlist_tracks
     if type_hint in ("playlist", "user-playlist"):
         playlist = _resolve_playlist(
@@ -318,7 +318,7 @@ def fetch_metadata(
 
     cover_url = _hi_res_cover(session, album_data)
 
-    tracks: List[TrackMetadata] = []
+    tracks: list[TrackMetadata] = []
     for lt in light_tracks:
         asin = lt.get("asin")
         td = rich.get(asin, lt)

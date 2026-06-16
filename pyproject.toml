@@ -31,7 +31,22 @@ dependencies = [
 [project.scripts]
 amzdl = "amzdl.main:main"
 
+[dependency-groups]
+dev = [
+    "pre-commit>=3.5",
+    "ruff>=0.6",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["amzdl*", "amazonmusic*"]
 namespaces = true
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["src/amazonmusic"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

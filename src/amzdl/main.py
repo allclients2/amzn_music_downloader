@@ -3,14 +3,12 @@ import asyncio
 import sys
 from pathlib import Path
 
-from amzdl.auth import auth
-from amzdl.auth import config
-from amzdl.cli import prompts
-from amzdl.cli import ui
-from amzdl.process.download import download, download_batch
+from amzdl._version import VERSION
+from amzdl.auth import auth, config
+from amzdl.cli import prompts, ui
 from amzdl.metadata import links
 from amzdl.metadata.search import SEARCH_TYPES, normalize_type, search_catalog
-from amzdl._version import VERSION
+from amzdl.process.download import download, download_batch
 
 
 def _add_download_args(parser):

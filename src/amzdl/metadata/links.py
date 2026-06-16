@@ -4,7 +4,6 @@ import functools
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from amazonmusic.models import AmazonRegion
@@ -55,7 +54,7 @@ def _tld_to_country() -> dict:
     }
 
 
-def _country_from_host(host: str) -> Optional[str]:
+def _country_from_host(host: str) -> str | None:
     host = (host or "").lower()
     marker = "amazon."
     idx = host.rfind(marker)
@@ -64,7 +63,7 @@ def _country_from_host(host: str) -> Optional[str]:
     return _tld_to_country().get(host[idx + len(marker):])
 
 
-def _type_from_url(url) -> Optional[str]:
+def _type_from_url(url) -> str | None:
     if parse_qs(url.query).get("trackAsin"):
         return "track"
     components = [c for c in url.path.split("/") if c]
@@ -78,8 +77,8 @@ def _type_from_url(url) -> Optional[str]:
 
 @dataclass(frozen=True)
 class LinkHint:
-    type: Optional[str] = None
-    country: Optional[str] = None
+    type: str | None = None
+    country: str | None = None
 
 
 def hint(raw: str) -> LinkHint:
@@ -93,7 +92,7 @@ def hint(raw: str) -> LinkHint:
     return LinkHint(type=_type_from_url(url), country=_country_from_host(url.hostname or ""))
 
 
-def type_hint(raw: str) -> Optional[str]:
+def type_hint(raw: str) -> str | None:
     return hint(raw).type
 
 
@@ -104,7 +103,7 @@ def parse_one(item: str) -> str:
     return item
 
 
-def input_file_label(raw: str) -> Optional[str]:
+def input_file_label(raw: str) -> str | None:
     try:
         if Path(raw).is_file():
             return Path(raw).name
@@ -113,7 +112,7 @@ def input_file_label(raw: str) -> Optional[str]:
     return None
 
 
-def resolve_inputs(raw: str) -> List[str]:
+def resolve_inputs(raw: str) -> list[str]:
     try:
         is_file = Path(raw).is_file()
     except OSError:

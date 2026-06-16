@@ -1,9 +1,7 @@
 """Playlist resolution via submodule endpoints (catalog and user/library). Members come from `get_catalog_playlist` or `get_user_playlist` and are built into full `TrackMetadata` that keep their own album tags, so tracks still land under `<album_artist>/<album>/`."""
 
-from typing import List, Optional
 
 from amazonmusic.azapi import AmazonMusicMobileAPI
-
 from amzdl.metadata.metadata import (
     PlaylistMetadata,
     TrackMetadata,
@@ -15,7 +13,7 @@ from amzdl.metadata.metadata import (
 )
 
 
-def _playlist_track_asin(track: dict) -> Optional[str]:
+def _playlist_track_asin(track: dict) -> str | None:
     if not isinstance(track, dict):
         return None
     meta = track.get("metadata")
@@ -27,11 +25,11 @@ def _playlist_track_asin(track: dict) -> Optional[str]:
 
 
 def _build_tracks_from_asins(
-    session: AmazonMusicMobileAPI, track_asins: List[str]
-) -> List[TrackMetadata]:
+    session: AmazonMusicMobileAPI, track_asins: list[str]
+) -> list[TrackMetadata]:
     rich, albums = fetch_tracks_and_albums(session, track_asins)
     cover_cache: dict = {}
-    tracks: List[TrackMetadata] = []
+    tracks: list[TrackMetadata] = []
     for asin in track_asins:
         td = rich.get(asin)
         if not td:
@@ -53,7 +51,7 @@ def _build_tracks_from_asins(
 def _playlist_from_data(
     session: AmazonMusicMobileAPI, p_data: dict, playlist_id: str,
     build_tracks: bool = True,
-) -> Optional[PlaylistMetadata]:
+) -> PlaylistMetadata | None:
     if not isinstance(p_data, dict):
         return None
     raw_tracks = p_data.get("tracks") or []
@@ -77,7 +75,7 @@ def _playlist_from_data(
 
 def try_fetch_playlist(
     session: AmazonMusicMobileAPI, playlist_asin: str, build_tracks: bool = True
-) -> Optional[PlaylistMetadata]:
+) -> PlaylistMetadata | None:
     try:
         catalog = session.get_catalog_playlist(playlist_asin)
     except Exception:
@@ -92,7 +90,7 @@ def try_fetch_playlist(
 
 def try_fetch_user_playlist(
     session: AmazonMusicMobileAPI, playlist_id: str, build_tracks: bool = True
-) -> Optional[PlaylistMetadata]:
+) -> PlaylistMetadata | None:
     try:
         resp = session.get_user_playlist(playlist_id)
     except Exception:

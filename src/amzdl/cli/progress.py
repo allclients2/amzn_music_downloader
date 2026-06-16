@@ -4,15 +4,23 @@ import threading
 import time
 
 from amzdl.cli import ui
+from amzdl.cli.ui import FAINT as _FAINT
+from amzdl.cli.ui import GREEN as _GREEN
+from amzdl.cli.ui import GREY as _GREY
+from amzdl.cli.ui import YELLOW as _YELLOW
 from amzdl.cli.ui import paint as _paint
-from amzdl.cli.ui import FAINT as _FAINT, GREY as _GREY, YELLOW as _YELLOW, GREEN as _GREEN
 from amzdl.util import (
     disp_width as _disp_width,
+)
+from amzdl.util import (
     fixed as _fixed,
+)
+from amzdl.util import (
     take_cols as _take_cols,
+)
+from amzdl.util import (
     truncate as _truncate,
 )
-
 
 _FILL = "█"
 _BRAND_TEXT = ui.BRAND_TEXT

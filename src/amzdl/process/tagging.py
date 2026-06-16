@@ -142,6 +142,7 @@ def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwo
 
 def embed_metadata_and_cover_opus(opus_path: str, track: TrackMetadata, lyrics, artwork_path):
     import base64
+
     from mutagen.oggopus import OggOpus
 
     audio = OggOpus(opus_path)
