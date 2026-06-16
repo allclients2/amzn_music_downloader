@@ -1,10 +1,4 @@
-"""Widevine content-key acquisition.
-
-Builds a `pywidevine` license challenge from a provisioned Widevine device file,
-exchanges it through the signed `getLicenseForPlaybackV2` endpoint
-(`AmazonMusicMobileAPI.get_license_response()`), and returns the decrypted content
-key as a `kid:key` string for the in-process CENC decryptor (`process.decrypt`).
-"""
+"""Widevine content-key acquisition. Builds a `pywidevine` license challenge from a provisioned device file, exchanges it through the signed `getLicenseForPlaybackV2` endpoint, and returns the `kid:key` content key for the CENC decryptor."""
 
 import base64
 import logging
@@ -19,10 +13,8 @@ _log = logging.getLogger("downloader.keys")
 class Keys:
     @staticmethod
     def getContentKeys(session, asin: str, psshStr: str, wvd_path: str = "device.wvd") -> str:
-        # PSSH usually lives in the MPD ContentProtection (web/TRACK_PSSH here).
         pssh = PSSH(psshStr)
 
-        # Load the provisioned Widevine device + CDM.
         device = Device.load(wvd_path)
         cdm = Cdm.from_device(device)
 
@@ -32,7 +24,6 @@ class Keys:
             base64_challenge = base64.b64encode(challenge).decode("utf-8")
             _log.debug("license challenge (truncated): %s", base64_challenge[:50])
 
-            # Signed license request via the Amazon Music API.
             license_response = session.get_license_response(
                 asin=asin, challenge=base64_challenge, drm_type="WIDEVINE"
             )

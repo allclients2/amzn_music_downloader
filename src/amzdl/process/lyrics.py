@@ -1,19 +1,4 @@
-"""Lyrics parsing for the music-xray-service response.
-
-`AmazonMusicMobileAPI.get_track_lyrics()` returns a `lyricsResponseList[0]` dict
-shaped like::
-
-    {
-      "lyrics": {
-        "lines": [{"startTime": <ms>, "endTime": <ms>, "text": "..."}, ...],
-        "writers": [...],
-      },
-      "lyricsResponseCode": "1002",  # 1002 = found, 2001 = not found
-    }
-
-Some regions/tracks return an unsynced-only payload (no `lines`); we fall back
-to any plain-text field.
-"""
+"""Lyrics parsing for the music-xray-service response. Parses `get_track_lyrics()` into synced lines, falling back to any plain-text field for regions/tracks that return an unsynced-only payload."""
 
 from dataclasses import dataclass
 from typing import List, Optional
@@ -21,7 +6,7 @@ from typing import List, Optional
 
 @dataclass
 class LyricsLine:
-    timestamp_ms: Optional[int]  # None for unsynced lines
+    timestamp_ms: Optional[int]
     text: str
 
 
@@ -51,7 +36,6 @@ class Lyrics:
             parsed.append(LyricsLine(timestamp_ms=ts, text=text))
 
         if not parsed:
-            # Unsynced-only fallback.
             plain = (
                 payload.get("text")
                 or payload.get("plainText")
@@ -77,7 +61,6 @@ class Lyrics:
         return any(l.timestamp_ms is not None for l in self.lines)
 
     def to_lrc(self) -> str:
-        """Synced .lrc body (only emitted when timestamps are present)."""
         if not self._has_synced():
             return ""
         out = []
@@ -96,7 +79,6 @@ class Lyrics:
         return str(path)
 
     def to_mp4_lyrics(self) -> str:
-        """Unsynced plain-text lyrics for the embedded LYRICS tag."""
         return "\n".join(line.text for line in self.lines)
 
     def has_content(self) -> bool:

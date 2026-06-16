@@ -1,16 +1,4 @@
-"""Authentication for the Amazon Music downloader.
-
-Builds the single signed `AmazonMusicMobileAPI` session that every stage
-(metadata, manifest, license, lyrics) shares. Auth is device-registration OAuth
-with RSA-signed requests.
-
-The first run performs an interactive browser sign-in (the user pastes the
-post-login URL back). Credentials are pickled to `config/credentials.bin`, keyed
-by Amazon `customer_id` so several accounts can be stored side by side (including
-multiple in the same region); each account's public metadata (name, country) is
-mirrored into `config/config.json`'s `accounts` table for selection/display.
-Access tokens are refreshed automatically when they expire.
-"""
+"""Authentication for the Amazon Music downloader. Builds the single signed `AmazonMusicMobileAPI` session every stage shares, performing interactive browser OAuth on first run and persisting per-`customer_id` credentials to `config/credentials.bin`."""
 
 import os
 import pickle
@@ -27,39 +15,27 @@ from amazonmusic.models import (
 
 
 class _CompatUnpickler(pickle.Unpickler):
-    """Load credential stores written before the move off the `vendor.amazonmusic`
-    adapter. Those pickles reference `vendor.amazonmusic.models`, which no longer
-    exists, so remap that module onto the submodule's `amazonmusic.models`. The
-    store is rewritten under the new path on the next save."""
 
     def find_class(self, module, name):
         if module == "vendor.amazonmusic" or module.startswith("vendor.amazonmusic."):
             module = "amazonmusic" + module[len("vendor.amazonmusic"):]
         return super().find_class(module, name)
 
-# Lives in the config/ folder (the program is run from the repo root). The env
-# override is kept for flexibility.
 CREDENTIALS_FILE = Path(os.environ.get("AMZ_CREDENTIALS_FILE", str(config.CREDENTIALS_FILE)))
-# Pre-config-folder location; read once so an existing login isn't lost on upgrade.
 _LEGACY_CREDENTIALS_FILE = Path("credentials.bin")
 
 
 def _credentials_path() -> Path:
-    """The store to read from: the configured path, or the legacy root file if
-    that's the only one present (it migrates to the configured path on save)."""
     if not CREDENTIALS_FILE.exists() and _LEGACY_CREDENTIALS_FILE.exists():
         return _LEGACY_CREDENTIALS_FILE
     return CREDENTIALS_FILE
 
 
 def _account_key(credentials: AmazonMusicMobileAPICredentials) -> str:
-    """The registry/store key for an account: its Amazon `customer_id`, falling
-    back to the region's country code on the rare chance the id wasn't recorded."""
     return credentials.customer_id or credentials.account_region.country
 
 
 def _account_info(credentials: AmazonMusicMobileAPICredentials) -> dict:
-    """The public metadata mirrored into `config.json['accounts']` for an account."""
     region = credentials.account_region
     return {
         "name": (credentials.customer_info or {}).get("name") or "Unknown",
@@ -69,18 +45,13 @@ def _account_info(credentials: AmazonMusicMobileAPICredentials) -> dict:
 
 
 def _load_store() -> dict:
-    """Return the `{customer_id: AmazonMusicMobileAPICredentials}` store (may be empty).
-
-    Older stores were keyed by country code; they're transparently re-keyed by
-    `customer_id` here so several accounts can coexist (including multiple in one
-    region). The re-keyed layout is written back on the next save."""
     path = _credentials_path()
     if not path.exists():
         return {}
     try:
         with open(path, "rb") as fh:
             data = _CompatUnpickler(fh).load()
-    except Exception as exc:  # corrupt/unreadable store -> treat as logged out
+    except Exception as exc:
         ui.warn(f"could not read {path} ({exc}); ignoring.")
         return {}
     if not isinstance(data, dict):
@@ -99,8 +70,6 @@ def _save_store(store: dict) -> None:
 
 
 def _sync_accounts(store: dict) -> None:
-    """Mirror the credential store into `config.json['accounts']` (upsert-only;
-    writes only when something actually changed, so it's cheap to call on load)."""
     current = config.load_accounts()
     merged = dict(current)
     changed = False
@@ -114,8 +83,6 @@ def _sync_accounts(store: dict) -> None:
 
 
 def _save_account(credentials: AmazonMusicMobileAPICredentials) -> str:
-    """Persist one account's credentials and mirror its metadata into config.json.
-    Used by both login and token refresh. Returns the account id (customer_id)."""
     account_id = _account_key(credentials)
     store = _load_store()
     store[account_id] = credentials
@@ -124,29 +91,19 @@ def _save_account(credentials: AmazonMusicMobileAPICredentials) -> str:
     return account_id
 
 def _cli_oauth_callback(oauth_url: str, application_name: str, country: str) -> str:
-    """Drive the interactive browser OAuth from a terminal.
-
-    Amazon hands out a sign-in URL; the user signs in, lands on a blank/"not
-    found" page, and pastes that final URL back here so the auth code can be
-    extracted. For JP this is invoked twice (Prime Video first, then Music); each
-    call renders its own self-contained screen via `prompts.prompt_oauth_url`.
-    """
     return prompts.prompt_oauth_url(f"{application_name} ({country})", oauth_url)
 
 
 def login(country: str) -> AmazonMusicMobileAPI:
-    """Run the interactive OAuth + device registration for `country` and persist it."""
     country = (country or "").strip().upper()
     if len(country) != 2:
         raise ValueError("Country must be a 2-letter ISO 3166-1 code (e.g. US, GB, JP).")
-    # Validate the region up front so a typo fails before the browser step.
     AmazonRegion.get_region_by_country(country)
 
     inst = AmazonMusicMobileAPI.login_via_mobile(
         email="",
         password="",
         country_code=country,
-        # Closure so the callback can title each screen with the region (e.g. JP).
         oauth_flow_callback=lambda url, app: _cli_oauth_callback(url, app, country),
     )
 
@@ -161,19 +118,16 @@ def _prompt_country() -> str:
 
 
 def _name_region(info: dict) -> tuple[str, str]:
-    """The display `(name, region)` for a config/account-info dict, with fallbacks."""
     name = info.get("name") or "Unknown"
     region = info.get("region") or info.get("country") or "?"
     return name, region
 
 
 def _resolve_account_id(store: dict, account: str | None) -> str | None:
-    """Resolve a user-supplied account reference (customer_id, account name, or
-    country code) to a stored account id, or None when nothing matches."""
     key = (account or "").strip()
     if not key:
         return None
-    if key in store:  # exact customer_id
+    if key in store:
         return key
     accounts = config.load_accounts()
     for account_id, creds in store.items():
@@ -185,9 +139,6 @@ def _resolve_account_id(store: dict, account: str | None) -> str | None:
 
 
 def delete_account(account: str) -> dict:
-    """Remove a stored account (credentials + the config.json mirror) by id, name,
-    or country code. Returns the removed account's info; raises KeyError when no
-    stored account matches."""
     store = _load_store()
     account_id = _resolve_account_id(store, account)
     if account_id is None:
@@ -202,14 +153,12 @@ def delete_account(account: str) -> dict:
         del accounts[account_id]
         config.save_accounts(accounts)
 
-    # Drop the default if it pointed at the account we just removed.
     if (config.get_settings().get("default_account") or "") == account_id:
         config.save_setting("default_account", "")
     return info
 
 
 def _account_label(account_id: str, store: dict, accounts: dict | None = None) -> str:
-    """A short human label for an account id, for menus and error messages."""
     accounts = config.load_accounts() if accounts is None else accounts
     info = accounts.get(account_id) or _account_info(store[account_id])
     name, region = _name_region(info)
@@ -217,8 +166,6 @@ def _account_label(account_id: str, store: dict, accounts: dict | None = None) -
 
 
 def _account_for_country(store: dict, target: str):
-    """The first stored account whose region matches `target` (a 2-letter code), or
-    None when none is stored."""
     target = target.strip().upper()
     for creds in store.values():
         region = creds.account_region
@@ -231,15 +178,10 @@ def _select_credentials(
     store: dict, account: str | None, country: str | None,
     country_hint: str | None = None,
 ):
-    """Pick stored credentials by explicit account, by region, by a link's region
-    hint, or by the default/sole account. Returns the credentials, or None when the
-    choice is ambiguous or the requested region isn't stored yet (the caller decides
-    whether to prompt)."""
     if not store:
         return None
 
     if account:
-        # Match by exact customer_id, account name (case-insensitive), or country.
         account_id = _resolve_account_id(store, account)
         if account_id is not None:
             return store[account_id]
@@ -250,30 +192,23 @@ def _select_credentials(
         )
 
     if country:
-        # Explicit region request: select it, else None so the caller signs in for it.
         return _account_for_country(store, country)
 
     if country_hint:
-        # Soft hint from a link's domain: prefer the matching stored account when one
-        # exists, but fall through to the default/sole/prompt logic when it doesn't —
-        # never sign in for an unstored region just because a link named it.
         creds = _account_for_country(store, country_hint)
         if creds is not None:
             info = _account_info(creds)
             return creds
 
-    # Nothing requested: use the configured default, then the sole account, else None.
     default = (config.get_settings().get("default_account") or "").strip()
     if default and default in store:
         return store[default]
     if len(store) == 1:
         return next(iter(store.values()))
-    return None  # zero, or several accounts with no way to choose
+    return None
 
 
 def _prompt_account(store: dict) -> str | None:
-    """Interactively choose among several stored accounts. Returns the chosen
-    account id, or None to sign in to a brand-new account."""
     accounts = config.load_accounts()
     ids = list(store.keys())
     options = [
@@ -290,18 +225,8 @@ def get_session(
     country_hint: str | None = None,
     interactive: bool = True,
 ) -> AmazonMusicMobileAPI:
-    """Return a ready-to-use signed session, signing in interactively if needed.
-
-    `account` selects a stored account by id (customer_id), name, or country code;
-    `country` selects by region. `country_hint` (e.g. a link's domain region) is a
-    *soft* preference: the matching stored account is used when one exists, otherwise
-    it's ignored. With none of these set, the `default_account` from config is used,
-    or the sole stored account, or — when interactive — the user is asked to pick one
-    (or sign in). Set `interactive=False` to raise instead of prompting when no single
-    account can be resolved.
-    """
     store = _load_store()
-    _sync_accounts(store)  # keep config.json's accounts table current
+    _sync_accounts(store)
 
     credentials = _select_credentials(store, account, country, country_hint)
 
@@ -317,7 +242,6 @@ def get_session(
                 "No saved Amazon Music login. Run `python src/main.py account --add` "
                 "once to sign in."
             )
-        # Interactive: choose among existing accounts, or sign in to a new one.
         if store and account is None and country is None:
             chosen = _prompt_account(store)
             if chosen is not None:
@@ -333,7 +257,6 @@ def get_session(
 
 
 def _ready_session(credentials) -> AmazonMusicMobileAPI:
-    """Wrap stored credentials in a session, refreshing an expired access token."""
     session = AmazonMusicMobileAPI(credentials=credentials)
     if session.credentials.access_token_expired:
         ui.note("Access token expired; refreshing...")

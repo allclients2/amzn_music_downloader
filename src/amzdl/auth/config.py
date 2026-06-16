@@ -1,33 +1,4 @@
-"""Persistent configuration for the downloader.
-
-On first use a `config/` folder is created (see `CONFIG_DIR` for where) holding:
-
-  - `config.json`     — user-editable defaults (quality, output dir, wvd path)
-  - `credentials.bin` — pickled per-account Amazon Music logins (written by `auth`)
-
-`CONFIG_DIR` resolves a `config/` folder in the current working directory when one
-exists (the repo-root dev layout); otherwise it falls back to a per-user base dir
-(`$AMZDL_CONFIG_DIR`, else `$XDG_CONFIG_HOME/amzdl`, else `~/.config/amzdl`), so the
-tool works both from a repo checkout and as a system-wide install.
-
-The `accounts` table is the registry of signed-in accounts, keyed by the account's
-`customer_id` (the stable, unique Amazon account identifier). Each entry mirrors the
-human-readable metadata of the matching credentials in `credentials.bin`:
-
-    "accounts": {
-        "<customer_id>": {
-            "name": "Jane Doe",                       # account holder name
-            "country": "US",                          # 2-letter region code
-            "region": "United States of America"      # pretty region name
-        }
-    }
-
-`auth` keeps this table in sync with `credentials.bin` on login/refresh; it is
-written for display/selection and is safe to read but should not be hand-edited to
-add accounts (the secrets live in `credentials.bin`). `default_account` (a
-`customer_id`) picks which account to use when several are stored and none is
-requested explicitly.
-"""
+"""Persistent configuration for the downloader. Manages the `config/` folder (`config.json` defaults plus the `accounts` registry and pickled `credentials.bin`) and resolves its location across repo-checkout and installed layouts."""
 
 import copy
 import json
@@ -36,9 +7,6 @@ from pathlib import Path
 
 
 def _resolve_config_dir() -> Path:
-    """A `config/` folder in the current working directory wins (the repo-root dev
-    layout); otherwise a per-user base dir: `$AMZDL_CONFIG_DIR`, else
-    `$XDG_CONFIG_HOME/amzdl`, else `~/.config/amzdl`."""
     cwd_config = Path("config")
     if cwd_config.is_dir():
         return cwd_config
@@ -71,7 +39,6 @@ DEFAULT_CONFIG = {
 
 
 def _write_config(data: dict) -> None:
-    """Write the full config dict to `config/config.json`."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=4)
@@ -79,15 +46,11 @@ def _write_config(data: dict) -> None:
 
 
 def _write_default() -> dict:
-    """Create `config/config.json` from the defaults and return a fresh copy."""
     _write_config(DEFAULT_CONFIG)
     return copy.deepcopy(DEFAULT_CONFIG)
 
 
 def load_config() -> dict:
-    """Return the config dict, generating `config/config.json` from defaults when
-    it's missing. Missing `config` keys are backfilled from the defaults so an
-    older/partial file keeps working; `accounts` is preserved as-is."""
     if not CONFIG_FILE.exists():
         return _write_default()
 
@@ -103,9 +66,6 @@ def load_config() -> dict:
         cfg = data.get("config")
         if isinstance(cfg, dict):
             cfg = dict(cfg)
-            # `use_type_hints` was renamed to `use_link_hints` (it now toggles the
-            # region hint too); carry an older file's value over, dropping the stale
-            # key. The renamed key is written out on the next save.
             if "use_type_hints" in cfg and "use_link_hints" not in cfg:
                 cfg["use_link_hints"] = cfg.pop("use_type_hints")
             else:
@@ -117,16 +77,10 @@ def load_config() -> dict:
 
 
 def get_settings() -> dict:
-    """The `config` sub-table: default_quality / default_output / default_wvd_path /
-    default_account / default_concurrency / default_metadata_concurrency /
-    use_link_hints."""
     return load_config()["config"]
 
 
 def resolve_wvd_path(override: str | None = None) -> Path:
-    """Resolve the Widevine device file. An explicit `override` (`--wvd-path`) wins;
-    otherwise the configured `default_wvd_path` is used when it exists (typically
-    `device.wvd` in the working directory), falling back to `CONFIG_DIR/device.wvd`."""
     if override:
         return Path(override).expanduser()
     configured = Path(get_settings()["default_wvd_path"]).expanduser()
@@ -136,19 +90,16 @@ def resolve_wvd_path(override: str | None = None) -> Path:
 
 
 def load_accounts() -> dict:
-    """The `accounts` registry: `{customer_id: {name, country, region}}` (may be empty)."""
     return load_config()["accounts"]
 
 
 def save_accounts(accounts: dict) -> None:
-    """Replace the `accounts` table, preserving the rest of the config file."""
     data = load_config()
     data["accounts"] = accounts
     _write_config(data)
 
 
 def save_setting(key: str, value) -> None:
-    """Set one key in the `config` sub-table, preserving the rest of the file."""
     data = load_config()
     data["config"][key] = value
     _write_config(data)

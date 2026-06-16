@@ -1,12 +1,4 @@
-"""Tag a downloaded track and embed its cover art.
-
-Stream copies keep each codec in its natural container, so the tag format depends
-on that container: FLAC and Ogg Opus take Vorbis comments (shared key vocabulary),
-the spatial `.mp4` (Atmos / 360RA) takes MP4 atoms, and the raw `.ac4` elementary
-stream carries no container so it can't be tagged. `tag_track` dispatches on the
-`tag_mode` chosen by `fetch_track._output_spec`, downloading the cover into the
-track's scratch dir and embedding it alongside the metadata.
-"""
+"""Tag a downloaded track and embed its cover art. `tag_track` dispatches on the container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus, MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`."""
 
 import tempfile
 
@@ -19,7 +11,6 @@ _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 )
-# FLAC Picture type 3 = front cover.
 _FRONT_COVER = 3
 
 
@@ -31,12 +22,6 @@ def _as_int(value) -> int:
 
 
 def download_artwork(url: str, directory: str):
-    """Download the cover JPEG into `directory`, returning its path (or None).
-
-    Called from `process_track` concurrently with the audio download, so the bytes
-    are already in hand by tagging time. The file lives in the track's scratch dir,
-    which is removed wholesale after the track finishes — no separate cleanup.
-    """
     if not url:
         return None
     with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg", dir=directory) as tmp:
@@ -55,13 +40,6 @@ def download_artwork(url: str, directory: str):
 
 def tag_track(media_path: str, track: TrackMetadata, lyrics, temp_dir: str,
               tag_mode: str = "flac", artwork_path=None):
-    """Embed tags + (already-downloaded) cover art onto the remuxed file (blocking).
-
-    `artwork_path` is the cover JPEG fetched by `process_track` concurrently with
-    the audio download (None when the track has no cover). `tag_mode`: "flac"/"opus"
-    (Vorbis comments), "mp4" (MP4 atoms, for the spatial .mp4 output), or None — a
-    raw elementary stream (AC-4 .ac4) that carries no container, so there's nothing
-    to tag."""
     if tag_mode is None:
         return
     if tag_mode == "mp4":
@@ -73,12 +51,10 @@ def tag_track(media_path: str, track: TrackMetadata, lyrics, temp_dir: str,
 
 
 def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, artwork_path):
-    """Tag a spatial .mp4 (Atmos / 360RA) with the same fields as the FLAC path,
-    mapped onto MP4 atoms (`mutagen.mp4`)."""
     from mutagen.mp4 import MP4, MP4Cover
 
     audio = MP4(mp4_path)
-    audio.delete()  # clear any tags carried over from the source container
+    audio.delete()
 
     def setv(key, value):
         if value is not None and value != "":
@@ -98,7 +74,6 @@ def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, ar
     if track.disc:
         audio["disk"] = [(_as_int(track.disc), _as_int(track.total_discs))]
 
-    # Freeform atoms for fields without a standard MP4 key.
     def freeform(name, value):
         if value is not None and value != "":
             audio[f"----:com.apple.iTunes:{name}"] = [str(value).encode("utf-8")]
@@ -120,7 +95,6 @@ def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, ar
 
 
 def _set_vorbis_fields(audio, track: TrackMetadata, lyrics):
-    """Populate Vorbis comments shared by FLAC and Ogg Opus (same key vocabulary)."""
     def setv(key, value):
         if value is not None and value != "":
             audio[key] = str(value)
@@ -147,7 +121,6 @@ def _set_vorbis_fields(audio, track: TrackMetadata, lyrics):
 
 
 def _build_cover_picture(artwork_path) -> Picture:
-    """A FLAC `Picture` (front cover) — used directly by FLAC, base64-wrapped by Opus."""
     with open(artwork_path, "rb") as img:
         cover_data = img.read()
     pic = Picture()
@@ -160,7 +133,7 @@ def _build_cover_picture(artwork_path) -> Picture:
 
 def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwork_path):
     audio = FLAC(flac_path)
-    audio.delete()  # clear any tags carried over from the source container
+    audio.delete()
     _set_vorbis_fields(audio, track, lyrics)
     if artwork_path:
         audio.add_picture(_build_cover_picture(artwork_path))
@@ -168,8 +141,6 @@ def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwo
 
 
 def embed_metadata_and_cover_opus(opus_path: str, track: TrackMetadata, lyrics, artwork_path):
-    """Tag a native Ogg Opus (lossy LD/SD) file — same Vorbis fields as FLAC, with
-    the cover carried in the standard base64 METADATA_BLOCK_PICTURE comment."""
     import base64
     from mutagen.oggopus import OggOpus
 

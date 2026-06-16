@@ -1,11 +1,4 @@
-"""Artist discography discovery via submodule endpoints (no catalog search).
-
-An artist's album ASINs are harvested from its `get_page("artist/<asin>")` catalog
-page (popular/new releases) plus the paginated `chronological-albums` shoveler. The
-page payload models each album as a dict tagged with a `__type` ending in `#Album`,
-whose `asin` is the album ASIN. `build_artist` returns the `ArtistMetadata` the
-download pipeline then expands per album ASIN.
-"""
+"""Artist discography discovery via submodule endpoints (no catalog search). Harvests an artist's album ASINs from its `get_page("artist/<asin>")` catalog page and the `chronological-albums` shoveler into the `ArtistMetadata` the pipeline expands."""
 
 from typing import List, Optional
 
@@ -13,15 +6,11 @@ from amazonmusic.azapi import AmazonMusicMobileAPI
 
 from amzdl.metadata.metadata import ArtistMetadata
 
-# Album ASINs are discovered from the artist's catalog pages (`get_page`), never
-# from textsearch. The page payload models each album as a dict tagged with a
-# `__type` of `...brush#Album`, whose `asin` is the album ASIN.
 _ALBUM_TYPE_SUFFIX = "#Album"
-_ARTIST_PAGE_MAX_PAGES = 40   # hard stop on discography pagination
+_ARTIST_PAGE_MAX_PAGES = 40
 
 
 def _find_next_token(obj) -> Optional[str]:
-    """The pagination `nextToken` anywhere in a get_page payload, or None."""
     stack = [obj]
     while stack:
         cur = stack.pop()
@@ -38,8 +27,6 @@ def _find_next_token(obj) -> Optional[str]:
 
 
 def _collect_album_asins(obj, seen: set, ordered: List[str]) -> None:
-    """Append (in encounter order, de-duped) the ASIN of every album entity — a
-    dict whose `__type` ends in `#Album` — found anywhere in a get_page payload."""
     if isinstance(obj, dict):
         if str(obj.get("__type", "")).endswith(_ALBUM_TYPE_SUFFIX) and obj.get("asin"):
             asin = str(obj["asin"])
@@ -55,12 +42,6 @@ def _collect_album_asins(obj, seen: set, ordered: List[str]) -> None:
 
 
 def _artist_album_asins(session: AmazonMusicMobileAPI, artist_asin: str) -> List[str]:
-    """Every album ASIN in an artist's discography, de-duped, with no catalog search.
-
-    The artist landing page (`artist/<asin>`) surfaces the popular/new-release
-    albums up front, then the `chronological-albums` shoveler is paginated (via its
-    `nextToken`) for the complete discography.
-    """
     seen: set = set()
     ordered: List[str] = []
 

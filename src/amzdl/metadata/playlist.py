@@ -1,12 +1,4 @@
-"""Playlist resolution via submodule endpoints (catalog and user/library).
-
-A catalog playlist's members come from `get_catalog_playlist`, a user/library
-playlist's from `get_user_playlist` (a 10-char id is a catalog ASIN, a longer id —
-uuid / library id — is a user playlist). Both endpoints model a playlist as a dict
-with a `tracks` list and a `metadata.title`, so they share one builder. Each member
-track is resolved to a full `TrackMetadata` (reusing the `metadata` builders) and
-keeps its own album/artist tags, so tracks still land under `<album_artist>/<album>/`.
-"""
+"""Playlist resolution via submodule endpoints (catalog and user/library). Members come from `get_catalog_playlist` or `get_user_playlist` and are built into full `TrackMetadata` that keep their own album tags, so tracks still land under `<album_artist>/<album>/`."""
 
 from typing import List, Optional
 
@@ -24,7 +16,6 @@ from amzdl.metadata.metadata import (
 
 
 def _playlist_track_asin(track: dict) -> Optional[str]:
-    """The track ASIN from a playlist member entry (nested under `metadata` or flat)."""
     if not isinstance(track, dict):
         return None
     meta = track.get("metadata")
@@ -38,14 +29,6 @@ def _playlist_track_asin(track: dict) -> Optional[str]:
 def _build_tracks_from_asins(
     session: AmazonMusicMobileAPI, track_asins: List[str]
 ) -> List[TrackMetadata]:
-    """`TrackMetadata` for an arbitrary list of track ASINs (playlist members).
-
-    The muse lookups are batched and each member's album rides along in the *same*
-    response (`fetch_tracks_and_albums`), so no second per-album round-trip is made;
-    each distinct album's cover is resolved only once and the original track order is
-    preserved. (The direct-download path uses the concurrent, progress-reporting
-    equivalent in `process.download`; this serial builder backs the batch path.)
-    """
     rich, albums = fetch_tracks_and_albums(session, track_asins)
     cover_cache: dict = {}
     tracks: List[TrackMetadata] = []
@@ -71,14 +54,6 @@ def _playlist_from_data(
     session: AmazonMusicMobileAPI, p_data: dict, playlist_id: str,
     build_tracks: bool = True,
 ) -> Optional[PlaylistMetadata]:
-    """Build a `PlaylistMetadata` from a playlist payload (catalog or user), or None
-    if it carries no resolvable tracks. Both endpoints model a playlist as a dict
-    with a `tracks` list and a `metadata.title`, so they share this builder.
-
-    With `build_tracks=False` only the member `track_asins` + `name` are resolved
-    (`tracks` left empty) — the caller builds the member metadata itself with
-    progress. "No resolvable tracks" then means "no member ASINs at all"; the actual
-    `TrackMetadata` build is deferred."""
     if not isinstance(p_data, dict):
         return None
     raw_tracks = p_data.get("tracks") or []
@@ -103,9 +78,6 @@ def _playlist_from_data(
 def try_fetch_playlist(
     session: AmazonMusicMobileAPI, playlist_asin: str, build_tracks: bool = True
 ) -> Optional[PlaylistMetadata]:
-    """Resolve a catalog-playlist ASIN to a `PlaylistMetadata`, or None if the ASIN
-    isn't a catalog playlist (so the caller can fall back / raise a combined error).
-    `build_tracks=False` defers the member-metadata build (see `_playlist_from_data`)."""
     try:
         catalog = session.get_catalog_playlist(playlist_asin)
     except Exception:
@@ -121,11 +93,6 @@ def try_fetch_playlist(
 def try_fetch_user_playlist(
     session: AmazonMusicMobileAPI, playlist_id: str, build_tracks: bool = True
 ) -> Optional[PlaylistMetadata]:
-    """Resolve a user/library-playlist id (a uuid or library id from a
-    `my/playlists/<id>` or `user-playlists/<id>` link) to a `PlaylistMetadata`, or
-    None if it isn't a user playlist. Served by `getPlaylistsByIdV2`, which returns
-    its playlist(s) under a `playlists` list rather than catalog's `playlist`.
-    `build_tracks=False` defers the member-metadata build (see `_playlist_from_data`)."""
     try:
         resp = session.get_user_playlist(playlist_id)
     except Exception:

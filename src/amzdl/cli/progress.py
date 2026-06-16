@@ -13,49 +13,34 @@ from amzdl.util import (
     truncate as _truncate,
 )
 
-# ── ANSI styling ────────────────────────────────────────────────────────────
-# The palette, brand, separator, and shared tree markers live in `ui` (one source
-# of truth for the whole CLI's look); progress just composes them.
 
 _FILL = "█"
-_BRAND_TEXT = ui.BRAND_TEXT   # raw text, for the header width math below
+_BRAND_TEXT = ui.BRAND_TEXT
 
-# Tree-connector markers. header "│", album aggregate "├", per-track slots
-# "├─" (and "╰─" for the last one), single-track bar "╰". The raw single-char
-# glyphs are kept for width math + the plain (non-TTY) renderer.
 _HEADER_MARK = "│"
 _AGG_MARK = "├"
 _SLOT_MARK = "├─"
 _SLOT_MARK_LAST = "╰─"
 _BAR_MARK = "╰"
 
-# Pre-composed, state-independent line pieces (built once, never reformatted).
-# Header/aggregate/bar markers + brand + separator come from `ui`; the two-char
-# per-track slot connectors are progress-specific.
 _MARK_HEADER = ui.MARK_HEADER
 _MARK_AGG = ui.MARK_TEE
 _MARK_SLOT = _paint(_SLOT_MARK, _FAINT, _GREY)
 _MARK_SLOT_LAST = _paint(_SLOT_MARK_LAST, _FAINT, _GREY)
 _MARK_BAR = ui.MARK_CLOSE
-_SEP = ui.SEP   # rendered as f" {_SEP} "
+_SEP = ui.SEP
 _BRAND = ui.BRAND
 _DONE = _paint("done", _GREEN)
 
-# Output occupies this fraction of the terminal width (leaves breathing room on
-# the right).
 _WIDTH_FRAC = .8
 
-# Per-track download is measured in these fixed stages (see fetch_track).
-_SINGLE_STEPS = 5     # single-track step bar denominator
-_TRACK_STEPS = 5      # album per-track slot bar denominator
+_SINGLE_STEPS = 5
+_TRACK_STEPS = 5
 
-# Fixed column reservations so bar widths never jitter with text length.
-_DESC_MAX = 20        # single-track step description
-_SLOT_NAME_W = 7      # truncated track name in a slot line
-_SLOT_DESC_W = 18     # step description in a slot line
+_DESC_MAX = 20
+_SLOT_NAME_W = 7
+_SLOT_DESC_W = 18
 
-# How fast the title marquee scrolls (display columns per second) and how often
-# the ticker thread redraws to animate it.
 _MARQUEE_CPS = 6
 _TICK_INTERVAL = 0.12
 
@@ -71,9 +56,6 @@ def _bar(width: int, frac: float) -> str:
 
 
 class _Slot:
-    """One track's step progress within an album download. While it runs it
-    occupies a slot line; once finished it's removed from the display (its
-    position in the pool may be reused by the next track)."""
     __slots__ = ("name", "total", "n", "desc", "done")
 
     def __init__(self, name: str, total: int):
@@ -92,11 +74,9 @@ class Progress:
         self.done = False
         self.start = time.time()
 
-        # Single-track step bar.
         self.steps_total = max(1, steps)
         self.n = 0
 
-        # Album (multi-track concurrent) state.
         self._album = False
         self._slots: list = []
         self.completed = 0
@@ -105,26 +85,17 @@ class Progress:
         self._agg_reserve = 0
         self._rate_label = "tracks/s"
 
-        # `plain` (e.g. verbose mode) disables the in-place redraw so log output
-        # doesn't fight the bar.
         self._tty = sys.stdout.isatty() and not plain
         self._rendered = False
         self._rendered_lines = 0
-        # The ticker thread and event-driven updates can both redraw; serialize
-        # their stdout writes and slot reads/writes.
         self._lock = threading.Lock()
         self._stop = False
         self._ticker = None
         if self._tty:
-            # While the animated bar owns the screen, buffer log output so stray
-            # WARNING/INFO lines can't shift the cursor and desync the in-place
-            # redraw; the buffer is released on finish()/abort().
             ui.begin_bar_logging()
-            # Animate the marquee + elapsed/ETA between state changes.
             self._ticker = threading.Thread(target=self._tick_loop, daemon=True)
             self._ticker.start()
 
-    # ── public API: single track ──────────────────────────────────────────
     def set_name(self, name: str):
         self.name = name
         self.render()
@@ -134,18 +105,12 @@ class Progress:
         self.render()
 
     def update(self, desc: str = None, advance: int = 1):
-        """Advance the single-track step bar (used as the per-step on_step)."""
         self.n += advance
         if desc is not None:
             self.desc = desc
         self.render()
 
-    # ── public API: album ───────────────────────────────────────────────────
     def begin_custom(self, total: int, rate_label: str = "tracks/s"):
-        """(Re)start the multi-item aggregate layout. `rate_label` names the unit of
-        the aggregate's per-second rate — "tracks/s" for a track download, "albums/s"
-        for the artist's up-front album-metadata phase. Calling it again switches
-        phases (e.g. albums/s metadata → tracks/s download) on the same bar."""
         with self._lock:
             self._album = True
             self._rate_label = rate_label
@@ -159,19 +124,14 @@ class Progress:
         self.render()
 
     def advance_aggregate(self, n: int = 1):
-        """Bump the aggregate completed-count by `n` with no per-item slot — used by
-        the artist's album-metadata phase, which shows only the aggregate bar."""
         with self._lock:
             self.completed += n
         self.render()
 
     def track_start(self, name: str, steps: int = _TRACK_STEPS) -> _Slot:
-        """Begin a track; returns a handle for `track_step`/`track_done`."""
         slot = _Slot(name, steps)
         with self._lock:
             self.desc = name
-            # Reuse the lowest finished (or empty) position so the slot lines
-            # stay put; otherwise grow the pool.
             for i, s in enumerate(self._slots):
                 if s is None or s.done:
                     self._slots[i] = slot
@@ -189,16 +149,12 @@ class Progress:
         self.render()
 
     def track_done(self, slot: _Slot):
-        # Mark the slot finished; it drops out of the rendered block (a later
-        # track_start may reuse its pool position) so the display shrinks as
-        # tracks complete.
         with self._lock:
             self.completed += 1
             slot.done = True
             slot.n = slot.total
         self.render()
 
-    # ── public API: lifecycle ───────────────────────────────────────────────
     def finish(self, desc: str = None):
         self.done = True
         self.n = self.steps_total
@@ -207,30 +163,17 @@ class Progress:
         if desc is not None:
             self.desc = desc
         self._shutdown_ticker()
-        self.render()  # ends on a fresh line below the block (trailing newline)
-        # Release any log lines buffered while the bar was live; they print just
-        # below the completed bar instead of corrupting it.
+        self.render()
         ui.end_bar_logging()
 
     def abort(self):
-        """Stop animating, clear the half-finished block, and surface anything that
-        was buffered while the bar owned the screen, so the error screen that
-        follows replaces the bar (one screen at a time) with any warnings as context.
-
-        In plain/verbose mode (no in-place block) nothing was rendered in place,
-        so there's nothing to clear: the last render already left the cursor on
-        the line below the block and the traceback prints cleanly beneath it."""
         self._shutdown_ticker()
         if self._tty and self._rendered:
-            # The block's lines are each one physical row (buffered logging kept
-            # the redraw in sync), so erase it now via the pending-rows machinery,
-            # then drop the buffered logs beneath where it stood.
             ui.adopt_pending_rows(self._rendered_lines)
             ui.consume_pending_screen()
             self._rendered = False
         ui.end_bar_logging()
 
-    # ── ticker ────────────────────────────────────────────────────────────
     def _tick_loop(self):
         while not self._stop:
             time.sleep(_TICK_INTERVAL)
@@ -242,31 +185,26 @@ class Progress:
         if self._ticker is not None and self._ticker is not threading.current_thread():
             self._ticker.join(timeout=_TICK_INTERVAL * 2)
 
-    # ── rendering ─────────────────────────────────────────────────────────
     @staticmethod
     def _term_width() -> int:
         cols = shutil.get_terminal_size((100, 24)).columns
         return max(40, int(cols * _WIDTH_FRAC))
 
     def _marquee(self, text: str, width: int) -> str:
-        """Scrolling window over `text`; returns full text if it already fits."""
         if width <= 0 or not text:
             return ""
         if _disp_width(text) <= width:
             return text
-        cycle = text + "   "  # trailing gap so the wrap-around reads cleanly
+        cycle = text + "   "
         pos = int((time.time() - self.start) * _MARQUEE_CPS) % len(cycle)
         rolled = cycle[pos:] + cycle[:pos]
-        # Repeat until we can fill the whole window across the wrap-around.
         while _disp_width(rolled) < width:
             rolled += cycle
         return _take_cols(rolled, width)
 
     def _title(self, term_w: int) -> str:
-        """Header track/album name: marquee while running, truncate when done."""
         if not self.name:
             return ""
-        # Columns left after "│ amzdl vX │ <asin> │ " (each " | " is 3 cols).
         prefix_w = 2 + _disp_width(_BRAND_TEXT) + 3 + _disp_width(self.asin) + 3
         avail = term_w - prefix_w
         return _truncate(self.name, avail) if self.done else self._marquee(self.name, avail)
@@ -281,7 +219,6 @@ class Progress:
     def _single_line(self, term_w: int) -> str:
         frac = 1.0 if self.done else min(1.0, self.n / self.steps_total)
         pct = f"{int(frac * 100):>3}%"
-        # Reserve a fixed _DESC_MAX slot so the bar width stays constant.
         overhead = _disp_width(_BAR_MARK) + 1 + len(pct) + 1 + 1 + _DESC_MAX
         bar_w = max(10, term_w - overhead)
         suffix = _DONE if self.done else _paint(_truncate(self.desc, _DESC_MAX), _FAINT)
@@ -294,8 +231,6 @@ class Progress:
         return min(1.0, (self.completed + active) / self.track_total)
 
     def _agg_line(self, term_w: int, last: bool = False) -> str:
-        # `last` when no track slots follow: close the tree with "╰" instead
-        # of the "├" tee.
         mark = _MARK_BAR if last else _MARK_AGG
         frac = 1.0 if self.done else self._agg_frac()
         pct = f"{int(frac * 100):>3}%"
@@ -311,7 +246,6 @@ class Progress:
                 f"{count}  [{_fmt_time(elapsed)}<{_fmt_time(eta)}, {rate:4.1f} {self._rate_label}]",
                 _FAINT,
             )
-        # Reserve a fixed suffix slot so the aggregate bar width stays constant.
         overhead = _disp_width(_AGG_MARK) + 1 + len(pct) + 1 + 1 + self._agg_reserve
         bar_w = max(10, term_w - overhead)
         return f"{mark} {pct} {_bar(bar_w, frac)} {suffix}"
@@ -326,7 +260,6 @@ class Progress:
             frac = min(1.0, slot.n / slot.total)
             suffix = _truncate(slot.desc, _SLOT_DESC_W)
         pct = f"{int(frac * 100):>3}%"
-        # mark "├─"/"╰─" is 2 cols; name + pct + desc are fixed-width reservations.
         overhead = 2 + 1 + _SLOT_NAME_W + 1 + len(pct) + 1 + 1 + _SLOT_DESC_W
         bar_w = max(8, term_w - overhead)
         return f"{mark} {name} {pct} {_bar(bar_w, frac)} {suffix}"
@@ -334,9 +267,6 @@ class Progress:
     def _lines(self, term_w: int) -> list:
         lines = [self._header(term_w)]
         if self._album:
-            # Only in-flight tracks get a slot line; finished ones are dropped so
-            # the block shrinks as the album completes, ending on just the header
-            # and aggregate line.
             active = [s for s in self._slots if s and not s.done]
             lines.append(self._agg_line(term_w, last=not active))
             for i, slot in enumerate(active):
@@ -346,7 +276,6 @@ class Progress:
         return lines
 
     def _render_plain(self):
-        """Non-interactive: one plain line per change (no ANSI in logs)."""
         if self.done:
             print(f"{_HEADER_MARK} done | {self.name or self.asin}")
         elif self._album:
@@ -363,15 +292,11 @@ class Progress:
         term_w = self._term_width()
         with self._lock:
             if self._stop and not self.done:
-                # Aborted by another thread; don't draw over the error/traceback.
                 return
             lines = self._lines(term_w)
             if self._rendered:
-                # Rewind to the top of the previous block and clear downwards.
                 sys.stdout.write(f"\033[{self._rendered_lines}F\033[J")
             else:
-                # First paint: clear the last setup screen (account selector /
-                # login notes) so the bar takes over the same single screen.
                 ui.consume_pending_screen()
             sys.stdout.write("\n".join(lines) + "\n")
             sys.stdout.flush()
