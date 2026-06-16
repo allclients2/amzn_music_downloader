@@ -6,29 +6,14 @@ Resolve an Amazon Music **track, album, artist, or playlist** to lossless
 **FLAC** (and native **Opus / MP4 / AC-4** for lossy and spatial tiers) for personal
 archival — fully tagged, with embedded cover art and a sidecar `.lrc` of synced
 lyrics. Ships as a **CLI**. Based upon the [OrpheusDL module.](https://github.com/bascurtiz/orpheusdl-amazonmusic)
-
-You can point it at:
-
-- a bare **ASIN**,
-- an **Amazon Music link** (any region domain — a `trackAsin=` selects one track), or
-- a path to a **text file** of ASINs/links (one per line, `#` comments ignored) — downloaded as one batch.
-
-An **artist** expands to its whole discography; a **playlist** (catalog *or* your
-user library) expands to its member tracks. There's also a `search` command to find
-something by name and pick a result to download.
-
-Every file lands at:
-
-```
-<output-dir>/<album artist>/<album>/<disc> - <track> <title>.flac
-```
-
 > [!NOTE]
 > For educational purposes only. You are responsible for complying with Amazon
 > Music's terms and your local laws.
 
-Built and tested on **Windows 11 (25H2)** and **macOS Tahoe (26.4.1)** with
-**Python 3.13**.
+## Install it with [uv](https://docs.astral.sh/uv/):
+```zsh
+uv tool install git+https://github.com/allclients2/downloader.git
+```
 
 ---
 
@@ -148,6 +133,9 @@ This is checked via a pre-commit hook.
 
 After this, `git commit` lints (and auto-fixes) your changes automatically; a commit
 is blocked if anything still fails.
+
+Built and tested on **Windows 11 (25H2)** and **macOS Tahoe (26.4.1)** with
+**Python 3.13**.
 
 ## First run & authentication
 
