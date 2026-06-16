@@ -25,12 +25,14 @@ class TrackMetadata:
     duration_seconds: int
     is_explicit: bool
     isrc: str | None = None
-    popularity: int | None = None
     composers: str | None = None
     release_date: str | None = None
     copyright: str | None = None
     label: str | None = None
     genre: str | None = None
+    merchant: str | None = None
+    review_average: float | None = None
+    review_count: int | None = None
     cover_url: str | None = None
 
 
@@ -158,6 +160,18 @@ def _composers(track_data: dict) -> str | None:
     return "; ".join(sorted(set(writers)))
 
 
+def _merchant(product: dict) -> str | None:
+    name = product.get("merchantName")
+    return " ".join(str(name).split()) if name else None
+
+
+def _reviews(album_data: dict) -> tuple[float | None, int | None]:
+    reviews = album_data.get("reviews") or {}
+    if not isinstance(reviews, dict):
+        return None, None
+    return reviews.get("average"), reviews.get("total")
+
+
 def _album_release_date(album_data: dict) -> str | None:
     return _ms_to_date(
         album_data.get("originalReleaseDate") or album_data.get("merchantReleaseDate")
@@ -168,6 +182,7 @@ def _build_track(
     track_data: dict, album_data: dict, disc_total: int, cover_url: str | None
 ) -> TrackMetadata:
     product = album_data.get("productDetails") or {}
+    review_average, review_count = _reviews(album_data)
     return TrackMetadata(
         asin=track_data.get("asin"),
         title=_strip_explicitness_label(track_data.get("title")),
@@ -185,12 +200,14 @@ def _build_track(
             (track_data.get("parentalControls") or {}).get("hasExplicitLanguage", False)
         ),
         isrc=track_data.get("isrc"),
-        popularity=track_data.get("popularity"),
         composers=_composers(track_data),
         release_date=_album_release_date(album_data),
         copyright=product.get("copyright"),
         label=product.get("label"),
         genre=product.get("primaryGenreName"),
+        merchant=_merchant(product),
+        review_average=review_average,
+        review_count=review_count,
         cover_url=cover_url,
     )
 

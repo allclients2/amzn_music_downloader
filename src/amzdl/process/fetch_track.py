@@ -32,6 +32,26 @@ def _output_spec(codec):
     return ".flac", "flac"
 
 
+def _track_url(session, track: TrackMetadata) -> str | None:
+    if not track.album_asin:
+        return None
+    region = session.credentials.account_region
+    return (
+        f"https://music.amazon.{region.domain_tld}/albums/{track.album_asin}"
+        f"?trackAsin={track.asin}&musicTerritory={region.country}"
+    )
+
+
+def _fetch_credits(session, asin: str) -> dict:
+    try:
+        return session.get_track_xray(
+            asin, region_to_use=session.credentials.account_region, parse_credits=True
+        ) or {}
+    except Exception:
+        _log.debug("credits lookup failed for %s", asin, exc_info=True)
+        return {}
+
+
 def _existing_download(track_output_dir: Path, output_filename: str):
     for ext in _AUDIO_EXTENSIONS:
         candidate = track_output_dir / (output_filename + ext)
@@ -123,6 +143,7 @@ async def process_track(
         asyncio.to_thread(Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path),
         asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
         asyncio.to_thread(fetch_cover),
+        asyncio.to_thread(_fetch_credits, session, track.asin),
     ]
     fetch_lyrics = lyrics_resp is None
     if fetch_lyrics:
@@ -130,8 +151,9 @@ async def process_track(
     results = await asyncio.gather(*coros)
     content_key = results[0]
     artwork_path = results[2]
+    credits = results[3]
     if fetch_lyrics:
-        lyrics_resp = results[3]
+        lyrics_resp = results[4]
 
     step("decrypting")
     decrypted_mp4 = temp_dir / "decrypted_temp.mp4"
@@ -149,7 +171,8 @@ async def process_track(
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
     await asyncio.to_thread(
-        tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode, artwork_path
+        tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode, artwork_path,
+        _track_url(session, track), credits, rep.get("reference_loudness"),
     )
 
     track_output_dir.mkdir(parents=True, exist_ok=True)

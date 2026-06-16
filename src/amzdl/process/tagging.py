@@ -1,5 +1,6 @@
-"""Tag a downloaded track and embed its cover art. `tag_track` dispatches on the container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus, MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`."""
+"""Tag a downloaded track and embed its cover art. `tag_track` dispatches on the container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus, MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`. Mirrors the tag set OrpheusDL's Amazon Music module writes: core fields, an Explicit/Clean RATING, the music.amazon URL (WWW), MERCHANT, reference loudness, a LABEL/PUBLISHER/ORGANIZATION fan-out, and per-role credits parsed from the track xray; plus the project's own REVIEW_AVERAGE/REVIEW_COUNT (album-level customer reviews). All tag names are normalized to UPPERCASE_SNAKE_CASE."""
 
+import re
 import tempfile
 
 import requests
@@ -12,6 +13,7 @@ _UA = (
     "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 )
 _FRONT_COVER = 3
+_CREDIT_NAME_SPLIT = re.compile(r" & |, | - | / | feat\. ")
 
 
 def _as_int(value) -> int:
@@ -19,6 +21,54 @@ def _as_int(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _split_credit_names(name: str) -> list[str]:
+    return [part for part in _CREDIT_NAME_SPLIT.split(str(name)) if part]
+
+
+def _credit_key(name: str) -> str:
+    cleaned = "".join(ch for ch in str(name) if 0x20 <= ord(ch) <= 0x7D and ch != "=")
+    return cleaned.strip().upper()
+
+
+def _prepare_credits(credits: dict | None, track: TrackMetadata) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for credit_type, names in (credits or {}).items():
+        key = _credit_key(credit_type)
+        if not key:
+            continue
+        for name in names or []:
+            grouped.setdefault(key, []).extend(_split_credit_names(name))
+
+    album_artist_lower = (track.album_artist or "").lower()
+    track_artist_lower = (track.artist or "").lower()
+    for key in list(grouped):
+        norm = key.replace("_", " ").replace("-", " ").strip().lower()
+        if norm == "music publisher":
+            del grouped[key]
+            continue
+        if norm in ("main artist", "primary artist"):
+            names_lower = [n.lower() for n in grouped[key]]
+            if album_artist_lower in names_lower or names_lower == [track_artist_lower]:
+                del grouped[key]
+
+    return {k: list(dict.fromkeys(v)) for k, v in grouped.items() if v}
+
+
+def _extra_tags(track: TrackMetadata, track_url, reference_loudness) -> dict[str, str]:
+    extra: dict[str, str] = {}
+    if track_url:
+        extra["WWW"] = track_url
+    if track.merchant:
+        extra["MERCHANT"] = track.merchant
+    if reference_loudness:
+        extra["REPLAYGAIN_REFERENCE_LOUDNESS"] = str(reference_loudness)
+    if track.review_average is not None:
+        extra["REVIEW_AVERAGE"] = track.review_average
+    if track.review_count is not None:
+        extra["REVIEW_COUNT"] = track.review_count
+    return extra
 
 
 def download_artwork(url: str, directory: str):
@@ -39,18 +89,28 @@ def download_artwork(url: str, directory: str):
 
 
 def tag_track(media_path: str, track: TrackMetadata, lyrics, temp_dir: str,
-              tag_mode: str = "flac", artwork_path=None):
+              tag_mode: str = "flac", artwork_path=None,
+              track_url=None, credits=None, reference_loudness=None):
     if tag_mode is None:
         return
+    prepared_credits = _prepare_credits(credits, track)
+    extra = _extra_tags(track, track_url, reference_loudness)
     if tag_mode == "mp4":
-        embed_metadata_and_cover_mp4(media_path, track, lyrics, artwork_path)
+        embed_metadata_and_cover_mp4(
+            media_path, track, lyrics, artwork_path, extra, prepared_credits
+        )
     elif tag_mode == "opus":
-        embed_metadata_and_cover_opus(media_path, track, lyrics, artwork_path)
+        embed_metadata_and_cover_opus(
+            media_path, track, lyrics, artwork_path, extra, prepared_credits
+        )
     else:
-        embed_metadata_and_cover(media_path, track, lyrics, artwork_path)
+        embed_metadata_and_cover(
+            media_path, track, lyrics, artwork_path, extra, prepared_credits
+        )
 
 
-def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, artwork_path):
+def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, artwork_path,
+                                 extra: dict, prepared_credits: dict):
     from mutagen.mp4 import MP4, MP4Cover
 
     audio = MP4(mp4_path)
@@ -59,6 +119,10 @@ def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, ar
     def setv(key, value):
         if value is not None and value != "":
             audio[key] = [str(value)]
+
+    def freeform(name, value):
+        if value is not None and value != "":
+            audio[f"----:com.apple.iTunes:{name}"] = [str(value).encode("utf-8")]
 
     setv("\xa9nam", track.title)
     setv("\xa9ART", track.artist)
@@ -74,15 +138,18 @@ def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, ar
     if track.disc:
         audio["disk"] = [(_as_int(track.disc), _as_int(track.total_discs))]
 
-    def freeform(name, value):
-        if value is not None and value != "":
-            audio[f"----:com.apple.iTunes:{name}"] = [str(value).encode("utf-8")]
+    audio["rtng"] = [1 if track.is_explicit else 0]
 
     freeform("ISRC", track.isrc)
-    freeform("LABEL", track.label)
-    freeform("EXPLICIT", "1" if track.is_explicit else "0")
-    if track.popularity is not None:
-        freeform("POPULARITY", track.popularity)
+
+    for name, value in extra.items():
+        freeform(name, value)
+    for credit_type, names in prepared_credits.items():
+        audio[f"----:com.apple.iTunes:{credit_type}"] = [n.encode("utf-8") for n in names]
+
+    if track.label:
+        setv("\xa9pub", track.label)
+        freeform("LABEL", track.label)
 
     if lyrics and lyrics.has_content():
         setv("\xa9lyr", lyrics.to_mp4_lyrics())
@@ -94,7 +161,7 @@ def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, ar
     audio.save()
 
 
-def _set_vorbis_fields(audio, track: TrackMetadata, lyrics):
+def _set_vorbis_fields(audio, track: TrackMetadata, lyrics, extra: dict, prepared_credits: dict):
     def setv(key, value):
         if value is not None and value != "":
             audio[key] = str(value)
@@ -104,18 +171,26 @@ def _set_vorbis_fields(audio, track: TrackMetadata, lyrics):
     setv("ALBUM", track.album_name)
     setv("ALBUMARTIST", track.album_artist)
     setv("TRACKNUMBER", track.track_number)
-    setv("TRACKTOTAL", track.total_tracks)
+    setv("TOTALTRACKS", track.total_tracks)
     setv("DISCNUMBER", track.disc)
-    setv("DISCTOTAL", track.total_discs)
+    setv("TOTALDISCS", track.total_discs)
     setv("DATE", track.release_date)
     setv("COPYRIGHT", track.copyright)
-    setv("LABEL", track.label)
     setv("GENRE", track.genre)
     setv("ISRC", track.isrc)
     setv("COMPOSER", track.composers)
-    setv("EXPLICIT", "1" if track.is_explicit else "0")
-    if track.popularity is not None:
-        setv("POPULARITY", track.popularity)
+    setv("RATING", "Explicit" if track.is_explicit else "Clean")
+
+    for key, value in extra.items():
+        setv(key, value)
+    for credit_type, names in prepared_credits.items():
+        audio[credit_type] = names
+
+    if track.label:
+        audio["LABEL"] = track.label
+        audio["PUBLISHER"] = track.label
+        audio["ORGANIZATION"] = track.label
+
     if lyrics and lyrics.has_content():
         setv("LYRICS", lyrics.to_mp4_lyrics())
 
@@ -131,23 +206,25 @@ def _build_cover_picture(artwork_path) -> Picture:
     return pic
 
 
-def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwork_path):
+def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwork_path,
+                             extra: dict, prepared_credits: dict):
     audio = FLAC(flac_path)
     audio.delete()
-    _set_vorbis_fields(audio, track, lyrics)
+    _set_vorbis_fields(audio, track, lyrics, extra, prepared_credits)
     if artwork_path:
         audio.add_picture(_build_cover_picture(artwork_path))
     audio.save()
 
 
-def embed_metadata_and_cover_opus(opus_path: str, track: TrackMetadata, lyrics, artwork_path):
+def embed_metadata_and_cover_opus(opus_path: str, track: TrackMetadata, lyrics, artwork_path,
+                                  extra: dict, prepared_credits: dict):
     import base64
 
     from mutagen.oggopus import OggOpus
 
     audio = OggOpus(opus_path)
     audio.delete()
-    _set_vorbis_fields(audio, track, lyrics)
+    _set_vorbis_fields(audio, track, lyrics, extra, prepared_credits)
     if artwork_path:
         pic = _build_cover_picture(artwork_path)
         audio["METADATA_BLOCK_PICTURE"] = [base64.b64encode(pic.write()).decode("ascii")]

@@ -163,9 +163,12 @@ def parse_mpd(raw_xml: str):
 
     for adaptation in root.findall(".//mpd:AdaptationSet", _NS):
         track_type = None
+        reference_loudness = None
         for prop in adaptation.findall("mpd:SupplementalProperty", _NS):
             if prop.attrib.get("schemeIdUri") == "amz-music:trackType":
                 track_type = prop.attrib.get("value")
+            elif prop.attrib.get("schemeIdUri") == "urn:mpeg:mpegB:cicp:ProgramLoudness":
+                reference_loudness = prop.attrib.get("value")
 
         adaptation_pssh = _web_pssh(adaptation)
 
@@ -196,6 +199,7 @@ def parse_mpd(raw_xml: str):
                     segments[0].attrib.get("mediaRange") if segments else None
                 ),
                 "pssh": adaptation_pssh,
+                "reference_loudness": reference_loudness,
             })
 
     return representations
