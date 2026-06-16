@@ -1,4 +1,4 @@
-"""Tag a downloaded track and embed its cover art. `tag_track` dispatches on the container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus, MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`. Mirrors the tag set OrpheusDL's Amazon Music module writes: core fields, an Explicit/Clean RATING, the music.amazon URL (WWW), MERCHANT, reference loudness, a LABEL/PUBLISHER/ORGANIZATION fan-out, and per-role credits parsed from the track xray; plus the project's own REVIEW_AVERAGE/REVIEW_COUNT (album-level customer reviews). All tag names are normalized to UPPERCASE_SNAKE_CASE."""
+"""Tag a downloaded track and embed its cover art. `tag_track` dispatches on the container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus, MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`. Mirrors the tag set OrpheusDL's Amazon Music module writes: core fields, an Explicit/Clean RATING, the music.amazon URL (WWW), MERCHANT, reference loudness, a LABEL/PUBLISHER/ORGANIZATION fan-out, and per-role credits parsed from the track xray; plus the project's own ALBUM_REVIEW_AVERAGE/ALBUM_REVIEW_COUNT (album-level customer reviews). All tag names are normalized to UPPERCASE_SNAKE_CASE."""
 
 import re
 import tempfile
@@ -65,9 +65,9 @@ def _extra_tags(track: TrackMetadata, track_url, reference_loudness) -> dict[str
     if reference_loudness:
         extra["REPLAYGAIN_REFERENCE_LOUDNESS"] = str(reference_loudness)
     if track.review_average is not None:
-        extra["REVIEW_AVERAGE"] = track.review_average
+        extra["ALBUM_REVIEW_AVERAGE"] = track.review_average
     if track.review_count is not None:
-        extra["REVIEW_COUNT"] = track.review_count
+        extra["ALBUM_REVIEW_COUNT"] = track.review_count
     return extra
 
 
