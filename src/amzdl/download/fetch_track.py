@@ -103,7 +103,7 @@ async def process_track(
     build_folder_structure: bool = True,
     lyrics_resp=None,
     on_step=None,
-    wvd_path: str = "device.wvd",
+    wvd_path: str | None = None,
     resolve_hi_res_cover: bool = False,
 ):
     def step(desc):
@@ -196,7 +196,7 @@ async def fetch_track(
     quality,
     build_folder_structure: bool = True,
     on_step=None,
-    wvd_path: str = "device.wvd",
+    wvd_path: str | None = None,
 ):
     if on_step:
         on_step("fetching manifest")

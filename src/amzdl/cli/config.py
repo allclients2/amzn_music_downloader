@@ -26,8 +26,8 @@ CREDENTIALS_FILE = CONFIG_DIR / "credentials.bin"
 DEFAULT_CONFIG = {
     "config": {
         "default_quality": "HD",
-        "default_output": "~/Music/amzdl-output",
-        "default_wvd_path": "device.wvd",
+        "default_output": "~/Music/amzdl",
+        "default_wvd_path": "",
         "default_account": "",
         "default_concurrency": 5,
         "default_metadata_concurrency": 10,
@@ -80,13 +80,13 @@ def get_settings() -> dict:
     return load_config()["config"]
 
 
-def resolve_wvd_path(override: str | None = None) -> Path:
+def resolve_wvd_path(override: str | None = None) -> Path | None:
     if override:
         return Path(override).expanduser()
-    configured = Path(get_settings()["default_wvd_path"]).expanduser()
-    if configured.exists():
-        return configured
-    return CONFIG_DIR / "device.wvd"
+    configured = get_settings()["default_wvd_path"]
+    if configured:
+        return Path(configured).expanduser()
+    return None
 
 
 def load_accounts() -> dict:

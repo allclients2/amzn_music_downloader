@@ -131,8 +131,8 @@ async def run_search(args):
     if choice is None:
         return
 
-    if not Path(wvd_path).exists():
-        cli.print_error("Widevine device not found")
+    if wvd_path is not None and not Path(wvd_path).exists():
+        cli.print_error(f"Widevine device not found: {wvd_path}")
         sys.exit(1)
 
     type_hint = search_type if settings["use_link_hints"] else None
@@ -160,8 +160,8 @@ async def run_download(args):
         cli.print_error("No ASINs or links found in input")
         sys.exit(1)
 
-    if not Path(wvd_path).exists():
-        cli.print_error("Widevine device not found")
+    if wvd_path is not None and not Path(wvd_path).exists():
+        cli.print_error(f"Widevine device not found: {wvd_path}")
         sys.exit(1)
 
     hint = links.hint(args.content_asin) if settings["use_link_hints"] else links.LinkHint()

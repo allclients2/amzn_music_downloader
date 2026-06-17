@@ -19,8 +19,7 @@ uv tool install git+https://github.com/allclients2/downloader.git
 
 ## Table of contents
 
-- [Requirements](#requirements)
-- [Setup](#setup)
+- [Setup from source](#setup-from-source)
   - [Setup with `uv` (recommended)](#setup-with-uv-recommended)
   - [Development & linting](#development--linting)
 - [First run & authentication](#first-run--authentication)
@@ -35,24 +34,7 @@ uv tool install git+https://github.com/allclients2/downloader.git
 
 ---
 
-## Requirements
-
-You need two things that **cannot** be installed via `pip`:
-
-| Requirement | What it is | How to get it |
-|---|---|---|
-| **`device.wvd`** | A provisioned **Widevine** device file used for license/decryption | Provide your own; place it in the working directory or your config dir (gitignored, never in the repo) |
-| **Python ≥ 3.10** | The runtime (developed and tested on 3.13) | [python.org](https://www.python.org/downloads/) |
-
-> [!IMPORTANT]
-> Without a valid `device.wvd`, decryption fails and the tool exits early. It is
-> looked for as `device.wvd` in the working directory first, then in the config dir
-> (`~/.config/amzdl/device.wvd`); override with `--wvd-path` or the `default_wvd_path`
-> config key.
-
----
-
-## Setup
+## Setup from source
 
 Clone the repo **with submodules** — the Amazon Music API client lives in a git
 submodule at `src/amazonmusic/`:
@@ -70,8 +52,7 @@ git submodule update --init --recursive
 > runs from anywhere. It uses a `config/` folder in the **current working directory**
 > when one exists (the repo-root dev layout), otherwise a per-user dir
 > (`$AMZDL_CONFIG_DIR`, else `$XDG_CONFIG_HOME/amzdl`, else `~/.config/amzdl`).
-> `device.wvd` is resolved the same way: the working directory first, then the config
-> dir. Downloads default to `~/Music/amzdl` (override with `--output`).
+> Downloads default to `~/Music/amzdl` (override with `--output`).
 
 ### Setup with `uv` (recommended)
 
@@ -167,7 +148,7 @@ usage: amzdl [-h] [--version] [--account ACCOUNT] [--output OUTPUT] [-v] [--qual
 | `--output OUTPUT` | Directory to save files into (default: config `default_output`) |
 | `--quality TIER` | Quality tier — linear ceiling (`LD`/`SD`/`HD`/`UHD` or a sub-tier) or a spatial tier; see [Quality tiers](#quality-tiers) (default: config `default_quality`) |
 | `--account ACCOUNT` | Which stored account to use — customer id, name, or country code |
-| `--wvd-path WVD_PATH` | Path to the Widevine device file (default: config `default_wvd_path`) |
+| `--wvd-path WVD_PATH` | Path to a Widevine device file to use instead of the built-in one |
 | `--metadata-concurrency N` | How many album-metadata lookups to run at once when expanding an artist/playlist/batch (default: config `default_metadata_concurrency`) |
 | `-v`, `--verbose` | Verbose logging + plain (non-animated) progress output |
 | `--version` | Print the version and exit |
@@ -283,7 +264,8 @@ On first run a `config/` folder is generated — in the current working director
 containing:
 
 - **`config.json`** — defaults plus the account registry:
-  - `default_quality`, `default_output`, `default_wvd_path` — the per-run defaults the matching flags override
+  - `default_quality`, `default_output` — the per-run defaults the matching flags override
+  - `default_wvd_path` — an optional Widevine device file to use instead of the built-in one (`--wvd-path`)
   - `default_concurrency` — how many tracks download at once (default 5)
   - `default_metadata_concurrency` — how many album-metadata lookups run at once when expanding an artist/playlist/batch (default 10; `--metadata-concurrency`)
   - `default_search_limit` — how many `search` hits to show (default 8; `--search-limit`)
@@ -299,7 +281,7 @@ flag, the config value is used. Missing keys in an existing `config.json` are
 backfilled automatically.
 
 > [!NOTE]
-> `config/`, `device.wvd`, and the `output/` & `downloads/` trees are all gitignored.
+> `config/` and the `output/` & `downloads/` trees are all gitignored.
 
 ---
 
@@ -338,11 +320,9 @@ subclass at `src/amzdl/api/amzn_api.py`. Pull upstream fixes with
 
 | Symptom | Likely cause / fix |
 |---|---|
-| `Widevine device not found` | No `device.wvd` at the expected path — place one in the repo root or pass `--wvd-path`. |
-| `Failed to get license: 400 … DEVICE_NOT_ELIGIBLE` (`ForbiddenException`) | Your `device.wvd` is invalid or has been revoked — Amazon won't issue a license to it. Provision a fresh, eligible Widevine device file and point `--wvd-path` / `default_wvd_path` at it. |
+| `Failed to get license: 400 … DEVICE_NOT_ELIGIBLE` (`ForbiddenException`) | The built-in Widevine device is invalid or has been revoked — Amazon won't issue a license to it. Provision a fresh, eligible Widevine device file and point `--wvd-path` / `default_wvd_path` at it. |
 | `ImportError` for `amazonmusic` | Submodule not fetched — run `git submodule update --init --recursive`. |
 | `amzdl: command not found` | The project isn't installed in the active environment — run `uv sync` (and activate `.venv`), or `uv tool install --from . amzdl` to put it on your `PATH`. |
-| `Widevine device not found` despite having one | `device.wvd` is looked for in the working directory first, then the config dir (`~/.config/amzdl/device.wvd`) — put it in one of those or pass `--wvd-path`. |
 
 For a full traceback on unexpected errors, re-run with `-v`.
 

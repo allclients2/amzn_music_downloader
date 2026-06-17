@@ -2,20 +2,26 @@
 
 import base64
 import logging
+from pathlib import Path
 
 from pywidevine.cdm import Cdm
 from pywidevine.device import Device
 from pywidevine.pssh import PSSH
+
+from amzdl.download.wvd import WVD
 
 _log = logging.getLogger("downloader.keys")
 
 
 class Keys:
     @staticmethod
-    def getContentKeys(session, asin: str, psshStr: str, wvd_path: str = "device.wvd") -> str:
+    def getContentKeys(session, asin: str, psshStr: str, wvd_path: str | None = None) -> str:
         pssh = PSSH(psshStr)
 
-        device = Device.load(wvd_path)
+        if wvd_path and Path(wvd_path).expanduser().exists():
+            device = Device.load(str(Path(wvd_path).expanduser()))
+        else:
+            device = Device.loads(WVD)
         cdm = Cdm.from_device(device)
 
         session_id = cdm.open()

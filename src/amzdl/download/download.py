@@ -47,7 +47,7 @@ def _has_lyrics(resp) -> bool:
     return bool((resp.get("lyrics") or {}).get("lines"))
 
 
-async def download(session, asin, output_dir, quality, wvd_path="device.wvd", plain=False,
+async def download(session, asin, output_dir, quality, wvd_path=None, plain=False,
                    concurrency=5, metadata_concurrency=10, type_hint=None):
     prog = Progress(asin=asin, plain=plain)
 
