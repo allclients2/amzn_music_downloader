@@ -48,7 +48,9 @@ def _fetch_credits(session, asin: str) -> dict:
             asin, region_to_use=session.credentials.account_region, parse_credits=True
         ) or {}
     except Exception:
-        _log.debug("credits lookup failed for %s", asin, exc_info=True)
+        _log.warning(
+            "credits lookup failed for %s; tagging without credits", asin, exc_info=True
+        )
         return {}
 
 

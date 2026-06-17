@@ -1,6 +1,7 @@
 """Download orchestration: dispatch an ASIN/batch to the right concurrency layout. `download()` resolves one input's kind and routes it (single track / album / artist / playlist); `download_batch()` runs a text file's inputs through the same two-phase bar."""
 
 import asyncio
+import logging
 
 from amzdl.cli import ui
 from amzdl.cli.progress import Progress
@@ -15,6 +16,8 @@ from amzdl.metadata.metadata import (
 )
 from amzdl.metadata.mpd_info import fetch_representations, select_representation
 from amzdl.process.fetch_track import fetch_track, process_track, purge_temp_dir
+
+_log = logging.getLogger("downloader.download")
 
 
 def _note_skipped(results):
@@ -139,7 +142,10 @@ async def _artist_tracks(session, artist, metadata_concurrency, on_album=None):
                 if kind == "album" and getattr(meta, "tracks", None):
                     metas.append(meta)
             except Exception:
-                pass
+                _log.warning(
+                    "album metadata fetch failed for %s; skipping it", album_asin,
+                    exc_info=True,
+                )
             finally:
                 if on_album:
                     on_album()
@@ -200,7 +206,14 @@ async def _playlist_member_meta(session, track_asins, metadata_concurrency):
 
     async def fetch_chunk(chunk):
         async with sem:
-            tracks, alb = await asyncio.to_thread(fetch_meta_chunk, session, chunk)
+            try:
+                tracks, alb = await asyncio.to_thread(fetch_meta_chunk, session, chunk)
+            except Exception:
+                _log.warning(
+                    "playlist member metadata fetch failed for %d track(s); skipping them",
+                    len(chunk), exc_info=True,
+                )
+                return
             rich.update(tracks)
             albums.update(alb)
 
@@ -221,17 +234,26 @@ async def _build_playlist_tracks(session, rich, albums, by_album, track_asins,
     built: dict = {}
 
     async def build_album(album_asin, members):
-        async with sem:
-            album_data = albums.get(album_asin) or await asyncio.to_thread(
-                _fetch_album_data, session, album_asin
-            )
-            cover = await asyncio.to_thread(_hi_res_cover, session, album_data)
-            disc_total = _disc_total(album_data)
-            for asin in members:
-                if asin in rich:
-                    built[asin] = _build_track(rich[asin], album_data, disc_total, cover)
-        if on_album:
-            on_album()
+        try:
+            async with sem:
+                try:
+                    album_data = albums.get(album_asin) or await asyncio.to_thread(
+                        _fetch_album_data, session, album_asin
+                    )
+                except Exception:
+                    _log.warning(
+                        "playlist album build failed for %s; skipping its track(s)",
+                        album_asin, exc_info=True,
+                    )
+                    return
+                cover = await asyncio.to_thread(_hi_res_cover, session, album_data)
+                disc_total = _disc_total(album_data)
+                for asin in members:
+                    if asin in rich:
+                        built[asin] = _build_track(rich[asin], album_data, disc_total, cover)
+        finally:
+            if on_album:
+                on_album()
 
     await asyncio.gather(*(build_album(a, m) for a, m in by_album.items()))
     return [built[a] for a in track_asins if a in built]
