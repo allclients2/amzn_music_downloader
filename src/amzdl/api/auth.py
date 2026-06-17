@@ -8,9 +8,8 @@ from amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
     AmazonRegion,
 )
-from amzdl.auth import config
-from amzdl.auth.amzn_api import AmazonMusicMobileAPI
-from amzdl.cli import prompts, ui
+from amzdl.api.amzn_api import AmazonMusicMobileAPI
+from amzdl.cli import cli, config, prompts
 
 
 class _CompatUnpickler(pickle.Unpickler):
@@ -51,7 +50,7 @@ def _load_store() -> dict:
         with open(path, "rb") as fh:
             data = _CompatUnpickler(fh).load()
     except Exception as exc:
-        ui.warn(f"could not read {path} ({exc}); ignoring.")
+        cli.warn(f"could not read {path} ({exc}); ignoring.")
         return {}
     if not isinstance(data, dict):
         return {}
@@ -108,7 +107,7 @@ def login(country: str) -> AmazonMusicMobileAPI:
 
     account_id = _save_account(inst.credentials)
     info = _account_info(inst.credentials)
-    ui.note(f"Saved account '{info['name']}' ({info['region']}) [{account_id}].")
+    cli.note(f"Saved account '{info['name']}' ({info['region']}) [{account_id}].")
     return inst
 
 
@@ -248,7 +247,7 @@ def get_session(
                 return login(_prompt_country())
         else:
             if not store:
-                ui.note("No saved Amazon Music login found.")
+                cli.note("No saved Amazon Music login found.")
             return login(country or _prompt_country())
 
     return _ready_session(credentials)
@@ -257,7 +256,7 @@ def get_session(
 def _ready_session(credentials) -> AmazonMusicMobileAPI:
     session = AmazonMusicMobileAPI(credentials=credentials)
     if session.credentials.access_token_expired:
-        ui.note("Access token expired; refreshing...")
+        cli.note("Access token expired; refreshing...")
         session.refresh_access_token(force=True)
         _save_account(session.credentials)
     return session

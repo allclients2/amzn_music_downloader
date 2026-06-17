@@ -3,27 +3,27 @@ import sys
 import threading
 import time
 
-from amzdl.cli import ui
-from amzdl.cli.ui import FAINT as _FAINT
-from amzdl.cli.ui import GREEN as _GREEN
-from amzdl.cli.ui import GREY as _GREY
-from amzdl.cli.ui import YELLOW as _YELLOW
-from amzdl.cli.ui import paint as _paint
-from amzdl.util import (
+from amzdl.cli import cli
+from amzdl.cli.cli import FAINT as _FAINT
+from amzdl.cli.cli import GREEN as _GREEN
+from amzdl.cli.cli import GREY as _GREY
+from amzdl.cli.cli import YELLOW as _YELLOW
+from amzdl.cli.cli import paint as _paint
+from amzdl.utils import (
     disp_width as _disp_width,
 )
-from amzdl.util import (
+from amzdl.utils import (
     fixed as _fixed,
 )
-from amzdl.util import (
+from amzdl.utils import (
     take_cols as _take_cols,
 )
-from amzdl.util import (
+from amzdl.utils import (
     truncate as _truncate,
 )
 
 _FILL = "█"
-_BRAND_TEXT = ui.BRAND_TEXT
+_BRAND_TEXT = cli.BRAND_TEXT
 
 _HEADER_MARK = "│"
 _AGG_MARK = "├"
@@ -31,13 +31,13 @@ _SLOT_MARK = "├─"
 _SLOT_MARK_LAST = "╰─"
 _BAR_MARK = "╰"
 
-_MARK_HEADER = ui.MARK_HEADER
-_MARK_AGG = ui.MARK_TEE
+_MARK_HEADER = cli.MARK_HEADER
+_MARK_AGG = cli.MARK_TEE
 _MARK_SLOT = _paint(_SLOT_MARK, _FAINT, _GREY)
 _MARK_SLOT_LAST = _paint(_SLOT_MARK_LAST, _FAINT, _GREY)
-_MARK_BAR = ui.MARK_CLOSE
-_SEP = ui.SEP
-_BRAND = ui.BRAND
+_MARK_BAR = cli.MARK_CLOSE
+_SEP = cli.SEP
+_BRAND = cli.BRAND
 _DONE = _paint("done", _GREEN)
 
 _WIDTH_FRAC = .8
@@ -100,7 +100,7 @@ class Progress:
         self._stop = False
         self._ticker = None
         if self._tty:
-            ui.begin_bar_logging()
+            cli.begin_bar_logging()
             self._ticker = threading.Thread(target=self._tick_loop, daemon=True)
             self._ticker.start()
 
@@ -172,15 +172,15 @@ class Progress:
             self.desc = desc
         self._shutdown_ticker()
         self.render()
-        ui.end_bar_logging()
+        cli.end_bar_logging()
 
     def abort(self):
         self._shutdown_ticker()
         if self._tty and self._rendered:
-            ui.adopt_pending_rows(self._rendered_lines)
-            ui.consume_pending_screen()
+            cli.adopt_pending_rows(self._rendered_lines)
+            cli.consume_pending_screen()
             self._rendered = False
-        ui.end_bar_logging()
+        cli.end_bar_logging()
 
     def _tick_loop(self):
         while not self._stop:
@@ -305,7 +305,7 @@ class Progress:
             if self._rendered:
                 sys.stdout.write(f"\033[{self._rendered_lines}F\033[J")
             else:
-                ui.consume_pending_screen()
+                cli.consume_pending_screen()
             sys.stdout.write("\n".join(lines) + "\n")
             sys.stdout.flush()
             self._rendered_lines = len(lines)

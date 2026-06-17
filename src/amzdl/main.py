@@ -4,11 +4,11 @@ import sys
 from pathlib import Path
 
 from amzdl._version import VERSION
-from amzdl.auth import auth, config
-from amzdl.cli import prompts, ui
-from amzdl.metadata import links
+from amzdl.api import auth
+from amzdl.cli import cli, config, prompts
+from amzdl.download import links
+from amzdl.download.download import download, download_batch
 from amzdl.metadata.search import SEARCH_TYPES, normalize_type, search_catalog
-from amzdl.process.download import download, download_batch
 
 
 def _add_download_args(parser):
@@ -53,7 +53,7 @@ def _add_download_args(parser):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description=ui.paint(f"amzdl v{VERSION}", ui.CYAN),
+        description=cli.paint(f"amzdl v{VERSION}", cli.CYAN),
         epilog="Manage accounts: `amzdl accounts`",
     )
 
@@ -77,7 +77,7 @@ def parse_args(argv=None):
 def parse_search_args(argv):
     parser = argparse.ArgumentParser(
         prog="amzdl search",
-        description=ui.paint(f"amzdl v{VERSION} — search", ui.CYAN),
+        description=cli.paint(f"amzdl v{VERSION} — search", cli.CYAN),
     )
     parser.add_argument(
         "query",
@@ -103,7 +103,7 @@ def parse_search_args(argv):
 
 
 async def run_search(args):
-    ui.setup_logging(args.verbose)
+    cli.setup_logging(args.verbose)
 
     settings = config.get_settings()
     quality = args.quality or settings["default_quality"]
@@ -124,7 +124,7 @@ async def run_search(args):
 
     results = await asyncio.to_thread(search_catalog, session, query, search_type, limit)
     if not results:
-        ui.note(f"No {search_type}s found for '{query}'.")
+        cli.note(f"No {search_type}s found for '{query}'.")
         return
 
     choice = prompts.prompt_search_results(search_type, [r.fields for r in results])
@@ -132,7 +132,7 @@ async def run_search(args):
         return
 
     if not Path(wvd_path).exists():
-        ui.print_error("Widevine device not found")
+        cli.print_error("Widevine device not found")
         sys.exit(1)
 
     type_hint = search_type if settings["use_link_hints"] else None
@@ -142,7 +142,7 @@ async def run_search(args):
 
 
 async def run_download(args):
-    ui.setup_logging(args.verbose)
+    cli.setup_logging(args.verbose)
 
     settings = config.get_settings()
     quality = args.quality or settings["default_quality"]
@@ -154,14 +154,14 @@ async def run_download(args):
     try:
         asins = links.resolve_inputs(args.content_asin)
     except (ValueError, OSError) as exc:
-        ui.print_error(f"Could not parse input: {exc}")
+        cli.print_error(f"Could not parse input: {exc}")
         sys.exit(1)
     if not asins:
-        ui.print_error("No ASINs or links found in input")
+        cli.print_error("No ASINs or links found in input")
         sys.exit(1)
 
     if not Path(wvd_path).exists():
-        ui.print_error("Widevine device not found")
+        cli.print_error("Widevine device not found")
         sys.exit(1)
 
     hint = links.hint(args.content_asin) if settings["use_link_hints"] else links.LinkHint()
@@ -193,7 +193,7 @@ def _add_account(country=None):
     try:
         auth.login(country)
     except (ValueError, TypeError) as exc:
-        ui.print_error(f"Add account failed: {exc}")
+        cli.print_error(f"Add account failed: {exc}")
         sys.exit(1)
     _, options = _account_options()
     prompts.print_account_summary("Account added", options)
@@ -225,10 +225,10 @@ def run_accounts(argv):
             try:
                 info = auth.delete_account(args.delete)
             except KeyError:
-                ui.print_error(f"No stored account matching '{args.delete}'.")
+                cli.print_error(f"No stored account matching '{args.delete}'.")
                 sys.exit(1)
             name, region = auth._name_region(info)
-            ui.note(f"Removed account '{name}' ({region}).")
+            cli.note(f"Removed account '{name}' ({region}).")
         elif args.add is not None:
             _add_account(args.add or None)
         else:
@@ -238,7 +238,7 @@ def run_accounts(argv):
     while True:
         ids, options = _account_options()
         if not ids:
-            ui.note("No accounts stored yet.")
+            cli.note("No accounts stored yet.")
             _add_account()
             continue
 
@@ -253,7 +253,7 @@ def run_accounts(argv):
         name, region = options[choice]
         if prompts.confirm_delete(name, region):
             auth.delete_account(account_id)
-            ui.note(f"Removed account '{name}' ({region}).")
+            cli.note(f"Removed account '{name}' ({region}).")
 
 
 def main():
@@ -271,7 +271,7 @@ def main():
     except Exception as exc:
         if verbose:
             raise
-        ui.print_error(str(exc) or type(exc).__name__)
+        cli.print_error(str(exc) or type(exc).__name__)
         sys.exit(1)
 
 

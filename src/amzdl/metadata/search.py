@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from amzdl.auth.amzn_api import AmazonMusicMobileAPI
+from amzdl.api.amzn_api import AmazonMusicMobileAPI
 
 SEARCH_TYPES = {
     "track": "catalog_track",

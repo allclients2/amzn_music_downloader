@@ -7,13 +7,13 @@ import sys
 import tempfile
 
 from amzdl import main
+from amzdl.download import download
 from amzdl.metadata.metadata import (
     AlbumMetadata,
     ArtistMetadata,
     PlaylistMetadata,
     TrackMetadata,
 )
-from amzdl.process import download
 
 _FAKE_TRACK_ASIN = "B0FAKETRACK"
 _FAKE_ALBUM_ASIN = "B0FAKEALBUM"

@@ -37,14 +37,12 @@ uv tool install git+https://github.com/allclients2/downloader.git
 
 ## Requirements
 
-You need three things that **cannot** be installed via `pip`:
+You need two things that **cannot** be installed via `pip`:
 
 | Requirement | What it is | How to get it |
 |---|---|---|
-| **`ffmpeg`** | Remuxes the decrypted stream into a `.flac` container | [ffmpeg.org](https://ffmpeg.org/download.html) — must be on `PATH` |
 | **`device.wvd`** | A provisioned **Widevine** device file used for license/decryption | Provide your own; place it in the working directory or your config dir (gitignored, never in the repo) |
-
-Plus **Python ≥ 3.10** (developed and tested on 3.13).
+| **Python ≥ 3.10** | The runtime (developed and tested on 3.13) | [python.org](https://www.python.org/downloads/) |
 
 > [!IMPORTANT]
 > Without a valid `device.wvd`, decryption fails and the tool exits early. It is
@@ -320,7 +318,7 @@ read line by line), then each track runs through a sequence of signed calls:
 | **Expansion** | artist `get_page` · `get_catalog_playlist` / `get_user_playlist` | An artist ASIN → its whole discography; a playlist id → its member tracks (catalog or user library) |
 | **Cover art** | `textsearch` (`artOriginal`) | Fetches the full-resolution master image (≈1500–3000 px) instead of the 600×600 render; one search per album |
 | **Manifest** | `getDashManifestsV2` | Returns a DASH MPD (lossless FLAC); audio is downloaded from its `BaseURL` |
-| **Decryption** | `getLicenseForPlaybackV2` | Drives a `pywidevine` challenge with the web `TRACK_PSSH`; the content key feeds the in-process CENC (AES-CTR) decryptor, then `ffmpeg -c copy` remuxes to `.flac` |
+| **Decryption** | `getLicenseForPlaybackV2` | Drives a `pywidevine` challenge with the web `TRACK_PSSH`; the content key feeds the in-process CENC (AES-CTR) decryptor, then a pure-Python remux writes the native container (`.flac` / `.opus` / spatial `.mp4` / `.ac4`) — no `ffmpeg` |
 | **Lyrics** | `getLyricsByTrackAsinBatch` | Time-synced lyrics → embedded `LYRICS` tag + sidecar `.lrc` |
 
 The `amzdl` package (under `src/amzdl/`) is a thin orchestration layer over a single
@@ -331,7 +329,7 @@ API subclass).
 
 The upstream API client is tracked as a **read-only git submodule** (a sibling
 package at `src/amazonmusic/`); the project's only local patches live in a thin
-subclass at `src/amzdl/auth/amzn_api.py`. Pull upstream fixes with
+subclass at `src/amzdl/api/amzn_api.py`. Pull upstream fixes with
 `git submodule update --remote`.
 
 ---
@@ -343,7 +341,6 @@ subclass at `src/amzdl/auth/amzn_api.py`. Pull upstream fixes with
 | `Widevine device not found` | No `device.wvd` at the expected path — place one in the repo root or pass `--wvd-path`. |
 | `Failed to get license: 400 … DEVICE_NOT_ELIGIBLE` (`ForbiddenException`) | Your `device.wvd` is invalid or has been revoked — Amazon won't issue a license to it. Provision a fresh, eligible Widevine device file and point `--wvd-path` / `default_wvd_path` at it. |
 | `ImportError` for `amazonmusic` | Submodule not fetched — run `git submodule update --init --recursive`. |
-| `ffmpeg` not found | Not on `PATH` — install it and reopen your shell. |
 | `amzdl: command not found` | The project isn't installed in the active environment — run `uv sync` (and activate `.venv`), or `uv tool install --from . amzdl` to put it on your `PATH`. |
 | `Widevine device not found` despite having one | `device.wvd` is looked for in the working directory first, then the config dir (`~/.config/amzdl/device.wvd`) — put it in one of those or pass `--wvd-path`. |
 
@@ -357,9 +354,8 @@ For a full traceback on unexpected errors, re-run with `-v`.
   **bascurtiz** (originally created by [yuinachan](https://github.com/yuinachan)) — the Amazon Music mobile API client this project is built on, vendored as
   the `src/amazonmusic/` git submodule (RSA request signing, device registration, the
   multi-region endpoints).
-- **[ffmpeg](https://ffmpeg.org/)** — stream-copies every decrypted track into its native
-  container.
-- **[gamdl](https://github.com/glomatico/gamdl)** — inspiration for the whole project, and
-  the design reference for restoring a protected sample entry (the `frma`/`sinf` strip) that
-  let us drop the external `mp4decrypt` dependency.
+- **[gamdl](https://github.com/glomatico/gamdl)** — inspiration for the whole project, the
+  design reference for restoring a protected sample entry (the `frma`/`sinf` strip) that let
+  us drop the external `mp4decrypt` dependency, and the reference for the pure-Python MP4
+  (de)muxer that let us drop `ffmpeg` entirely.
 - **Amazon** — for using a **secure** DRM.

@@ -3,19 +3,19 @@
 import asyncio
 import logging
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 import requests
 
+from amzdl.download.keys import Keys
+from amzdl.download.mpd_info import _AUDIO_EXTENSIONS, find_representation
+from amzdl.metadata.lyrics import Lyrics
 from amzdl.metadata.metadata import TrackMetadata, resolve_track_cover
-from amzdl.metadata.mpd_info import _AUDIO_EXTENSIONS, find_representation
-from amzdl.process.decrypt import decrypt_mp4
-from amzdl.process.keys import Keys
-from amzdl.process.lyrics import Lyrics
-from amzdl.process.tagging import download_artwork, tag_track
-from amzdl.util import build_output_filename, safe_filename
+from amzdl.metadata.tagging import download_artwork, tag_track
+from amzdl.remux.decrypt import decrypt_mp4
+from amzdl.remux.remux import remux_ac4, remux_flac, remux_mp4, remux_opus
+from amzdl.utils import build_output_filename, safe_filename
 
 _log = logging.getLogger("downloader.track")
 
@@ -80,17 +80,19 @@ def download_full_file(base_url: str, output_path):
     return output_path
 
 
+_REMUXERS = {
+    ".flac": remux_flac,
+    ".opus": remux_opus,
+    ".mp4": remux_mp4,
+    ".ac4": remux_ac4,
+}
+
+
 def remux_copy(src_mp4: Path, dst: Path) -> None:
-    cmd = [
-        "ffmpeg", "-nostdin", "-y",
-        "-i", str(src_mp4),
-        "-map", "0:a",
-        "-c:a", "copy",
-        str(dst),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg remux failed:\n{result.stderr}")
+    remuxer = _REMUXERS.get(dst.suffix)
+    if remuxer is None:
+        raise RuntimeError(f"no remuxer for {dst.suffix!r} output")
+    remuxer(src_mp4, dst)
 
 
 async def process_track(

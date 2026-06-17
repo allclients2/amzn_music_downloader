@@ -6,7 +6,7 @@ import shutil
 import sys
 
 from amzdl._version import VERSION
-from amzdl.util import disp_width
+from amzdl.utils import disp_width
 
 
 def _enable_windows_ansi() -> None:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "amzdl"
-version = "2.10.3"
+version = "2.10.4"
 authors = [ { name="alcts", email="all_clients@alcts.xyz" } ]
 requires-python = ">=3.10"
 description = "Download tracks, albums, playlists, and artists from Amazon Music"
@@ -14,7 +14,6 @@ dependencies = [
     "audible==0.8.2",
     "beautifulsoup4==4.12.2",
     "brotli",
-    "ffmpeg-python==0.2.0",
     "httpx==0.23.3",
     "mutagen",
     "natsort==8.4.0",

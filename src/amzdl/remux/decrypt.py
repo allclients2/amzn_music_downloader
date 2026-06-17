@@ -5,21 +5,16 @@ import struct
 
 from Crypto.Cipher import AES
 
+from amzdl.remux.mp4 import (
+    AUDIO_SAMPLE_ENTRY_HEADER,
+    find_box,
+    find_path,
+    iter_boxes,
+    parse_tfhd,
+    parse_trun,
+)
+
 _log = logging.getLogger("downloader.decrypt")
-
-_TFHD_BASE_DATA_OFFSET = 0x000001
-_TFHD_SAMPLE_DESC_INDEX = 0x000002
-_TFHD_DEFAULT_DURATION = 0x000008
-_TFHD_DEFAULT_SIZE = 0x000010
-_TFHD_DEFAULT_FLAGS = 0x000020
-_TFHD_DEFAULT_BASE_IS_MOOF = 0x020000
-
-_TRUN_DATA_OFFSET = 0x000001
-_TRUN_FIRST_SAMPLE_FLAGS = 0x000004
-_TRUN_SAMPLE_DURATION = 0x000100
-_TRUN_SAMPLE_SIZE = 0x000200
-_TRUN_SAMPLE_FLAGS = 0x000400
-_TRUN_SAMPLE_CTO = 0x000800
 
 _SENC_SUBSAMPLES = 0x000002
 
@@ -28,42 +23,6 @@ _PROTECTION_BOXES = (b"senc", b"saiz", b"saio")
 
 class DecryptError(Exception):
     pass
-
-
-def _iter_boxes(buf, start, end):
-    off = start
-    while off + 8 <= end:
-        size = struct.unpack(">I", buf[off : off + 4])[0]
-        btype = bytes(buf[off + 4 : off + 8])
-        header = 8
-        if size == 1:
-            if off + 16 > end:
-                break
-            size = struct.unpack(">Q", buf[off + 8 : off + 16])[0]
-            header = 16
-        elif size == 0:
-            size = end - off
-        if size < header or off + size > end:
-            break
-        yield btype, off, off + header, off + size
-        off += size
-
-
-def _find_box(buf, start, end, target):
-    for btype, box_start, content_start, box_end in _iter_boxes(buf, start, end):
-        if btype == target:
-            return box_start, content_start, box_end
-    return None
-
-
-def _find_path(buf, start, end, *path):
-    cur = (start, start, end)
-    for target in path:
-        found = _find_box(buf, cur[1], cur[2], target)
-        if found is None:
-            return None
-        cur = found
-    return cur
 
 
 def _parse_tenc(buf, content_start, box_end):
@@ -81,11 +40,8 @@ def _parse_tenc(buf, content_start, box_end):
     return iv_size, constant_iv
 
 
-_AUDIO_SAMPLE_ENTRY_HEADER = 36
-
-
 def _prepare_moov(buf, moov_content, moov_end):
-    stsd = _find_path(
+    stsd = find_path(
         buf, moov_content, moov_end,
         b"trak", b"mdia", b"minf", b"stbl", b"stsd",
     )
@@ -94,21 +50,21 @@ def _prepare_moov(buf, moov_content, moov_end):
 
     iv_size = None
     constant_iv = b""
-    for _btype, entry_start, _entry_content, entry_end in _iter_boxes(
+    for _btype, entry_start, _entry_content, entry_end in iter_boxes(
         buf, stsd[1] + 8, stsd[2]
     ):
-        child_start = entry_start + _AUDIO_SAMPLE_ENTRY_HEADER
+        child_start = entry_start + AUDIO_SAMPLE_ENTRY_HEADER
         if child_start >= entry_end:
             continue
-        sinf = _find_box(buf, child_start, entry_end, b"sinf")
+        sinf = find_box(buf, child_start, entry_end, b"sinf")
         if sinf is None:
             continue
 
-        frma = _find_box(buf, sinf[1], sinf[2], b"frma")
+        frma = find_box(buf, sinf[1], sinf[2], b"frma")
         if frma is not None:
             buf[entry_start + 4 : entry_start + 8] = buf[frma[1] : frma[1] + 4]
 
-        schm = _find_box(buf, sinf[1], sinf[2], b"schm")
+        schm = find_box(buf, sinf[1], sinf[2], b"schm")
         if schm is not None:
             scheme = bytes(buf[schm[1] + 4 : schm[1] + 8])
             if scheme != b"cenc":
@@ -116,7 +72,7 @@ def _prepare_moov(buf, moov_content, moov_end):
                     f"unsupported protection scheme {scheme!r}; only cenc (AES-CTR) is supported"
                 )
 
-        tenc = _find_path(buf, sinf[1], sinf[2], b"schi", b"tenc")
+        tenc = find_path(buf, sinf[1], sinf[2], b"schi", b"tenc")
         if tenc is not None:
             iv_size, constant_iv = _parse_tenc(buf, tenc[1], tenc[2])
 
@@ -125,54 +81,6 @@ def _prepare_moov(buf, moov_content, moov_end):
     if iv_size is None:
         raise DecryptError("no protected sample entry / tenc found in moov")
     return iv_size, constant_iv
-
-
-def _parse_tfhd(buf, content_start, box_end):
-    flags = struct.unpack(">I", b"\x00" + buf[content_start + 1 : content_start + 4])[0]
-    info = {
-        "flags": flags,
-        "base_data_offset": None,
-        "default_sample_size": 0,
-        "default_base_is_moof": bool(flags & _TFHD_DEFAULT_BASE_IS_MOOF),
-    }
-    off = content_start + 8
-    if flags & _TFHD_BASE_DATA_OFFSET:
-        info["base_data_offset"] = struct.unpack(">Q", buf[off : off + 8])[0]
-        off += 8
-    if flags & _TFHD_SAMPLE_DESC_INDEX:
-        off += 4
-    if flags & _TFHD_DEFAULT_DURATION:
-        off += 4
-    if flags & _TFHD_DEFAULT_SIZE:
-        info["default_sample_size"] = struct.unpack(">I", buf[off : off + 4])[0]
-        off += 4
-    return info
-
-
-def _parse_trun(buf, content_start, box_end, default_size):
-    flags = struct.unpack(">I", b"\x00" + buf[content_start + 1 : content_start + 4])[0]
-    sample_count = struct.unpack(">I", buf[content_start + 4 : content_start + 8])[0]
-    off = content_start + 8
-    data_offset = None
-    if flags & _TRUN_DATA_OFFSET:
-        data_offset = struct.unpack(">i", buf[off : off + 4])[0]
-        off += 4
-    if flags & _TRUN_FIRST_SAMPLE_FLAGS:
-        off += 4
-    sizes = []
-    for _ in range(sample_count):
-        if flags & _TRUN_SAMPLE_DURATION:
-            off += 4
-        if flags & _TRUN_SAMPLE_SIZE:
-            sizes.append(struct.unpack(">I", buf[off : off + 4])[0])
-            off += 4
-        else:
-            sizes.append(default_size)
-        if flags & _TRUN_SAMPLE_FLAGS:
-            off += 4
-        if flags & _TRUN_SAMPLE_CTO:
-            off += 4
-    return sizes, data_offset
 
 
 def _parse_senc(buf, content_start, box_end, iv_size):
@@ -222,29 +130,26 @@ def _decrypt_sample(buf, pos, size, iv16, subsamples, key):
 
 
 def _process_traf(buf, traf_start, traf_content, traf_end, moof_start, iv_size, constant_iv, key):
-    tfhd = _find_box(buf, traf_content, traf_end, b"tfhd")
+    tfhd = find_box(buf, traf_content, traf_end, b"tfhd")
     if tfhd is None:
         return
-    tf = _parse_tfhd(buf, tfhd[1], tfhd[2])
+    base_data_offset, _default_dur, default_size = parse_tfhd(buf, tfhd[1])
 
-    senc = _find_box(buf, traf_content, traf_end, b"senc")
+    senc = find_box(buf, traf_content, traf_end, b"senc")
     senc_entries = _parse_senc(buf, senc[1], senc[2], iv_size) if senc else []
 
     if not senc_entries and not constant_iv:
         return
 
-    if tf["base_data_offset"] is not None:
-        base = tf["base_data_offset"]
-    else:
-        base = moof_start
+    base = base_data_offset if base_data_offset is not None else moof_start
 
     sample_index = 0
-    for btype, _bs, b_content, b_end in _iter_boxes(buf, traf_content, traf_end):
+    for btype, _bs, b_content, _b_end in iter_boxes(buf, traf_content, traf_end):
         if btype != b"trun":
             continue
-        sizes, data_offset = _parse_trun(buf, b_content, b_end, tf["default_sample_size"])
+        samples, data_offset = parse_trun(buf, b_content, _default_dur, default_size)
         pos = base + (data_offset or 0)
-        for size in sizes:
+        for size, _dur in samples:
             if sample_index < len(senc_entries):
                 iv, subsamples = senc_entries[sample_index]
             else:
@@ -254,7 +159,7 @@ def _process_traf(buf, traf_start, traf_content, traf_end, moof_start, iv_size, 
             pos += size
             sample_index += 1
 
-    for btype, box_start, b_content, _b_end in _iter_boxes(buf, traf_content, traf_end):
+    for btype, box_start, b_content, _b_end in iter_boxes(buf, traf_content, traf_end):
         if btype in _PROTECTION_BOXES:
             buf[box_start + 4 : box_start + 8] = b"free"
         elif btype in (b"sbgp", b"sgpd"):
@@ -270,19 +175,19 @@ def decrypt_mp4(encrypted_path, key, output_path):
         buf = bytearray(f.read())
     end = len(buf)
 
-    moov = _find_box(buf, 0, end, b"moov")
+    moov = find_box(buf, 0, end, b"moov")
     if moov is None:
         raise DecryptError("no moov box found")
     iv_size, constant_iv = _prepare_moov(buf, moov[1], moov[2])
 
     fragment_count = 0
     pending_moof = None
-    for btype, box_start, content_start, box_end in _iter_boxes(buf, 0, end):
+    for btype, box_start, content_start, box_end in iter_boxes(buf, 0, end):
         if btype == b"moof":
             pending_moof = (box_start, content_start, box_end)
         elif btype == b"mdat" and pending_moof is not None:
             moof_start, moof_content, moof_end = pending_moof
-            for tb, ts, tc, te in _iter_boxes(buf, moof_content, moof_end):
+            for tb, ts, tc, te in iter_boxes(buf, moof_content, moof_end):
                 if tb == b"traf":
                     _process_traf(
                         buf, ts, tc, te, moof_start, iv_size, constant_iv, key_bytes
