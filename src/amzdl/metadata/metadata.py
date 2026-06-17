@@ -261,7 +261,7 @@ def _resolve_playlist(
     session: AmazonMusicMobileAPI, content_asin: str, prefer_user: bool,
     build_tracks: bool = True,
 ) -> Optional["PlaylistMetadata"]:
-    from metadata.playlist import try_fetch_playlist, try_fetch_user_playlist
+    from amzdl.metadata.playlist import try_fetch_playlist, try_fetch_user_playlist
     if prefer_user:
         return (try_fetch_user_playlist(session, content_asin, build_tracks)
                 or try_fetch_playlist(session, content_asin, build_tracks))
@@ -295,7 +295,7 @@ def fetch_metadata(
     artist_match = next((a for a in artists_list if a.get("asin") == content_asin), None)
 
     if artist_match or (artists_list and not albums_list and not tracks_list):
-        from metadata.discography import build_artist
+        from amzdl.metadata.discography import build_artist
         return "artist", build_artist(session, artist_match or artists_list[0], content_asin)
 
     if track_data or (tracks_list and not album_match):

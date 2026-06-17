@@ -136,9 +136,10 @@ def _process_traf(buf, traf_start, traf_content, traf_end, moof_start, iv_size, 
     base_data_offset, _default_dur, default_size = parse_tfhd(buf, tfhd[1])
 
     senc = find_box(buf, traf_content, traf_end, b"senc")
-    senc_entries = _parse_senc(buf, senc[1], senc[2], iv_size) if senc else []
-
-    if not senc_entries and not constant_iv:
+    if senc is None:
+        return
+    senc_entries = _parse_senc(buf, senc[1], senc[2], iv_size)
+    if not senc_entries:
         return
 
     base = base_data_offset if base_data_offset is not None else moof_start
