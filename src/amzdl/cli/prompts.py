@@ -76,7 +76,8 @@ def print_account_summary(title: str, options: list[tuple[str, str]]) -> None:
     cli._emit(header(title))
     last = len(options) - 1
     for i, (name, region) in enumerate(options):
-        cli._emit(_account_row(name, region, marker=MARK_CLOSE if i == last else MARK_TEE))
+        cli._emit(_account_row(name, region, index=i + 1,
+                               marker=MARK_CLOSE if i == last else MARK_TEE))
 
 
 def _search_title(type_label: str | None) -> str:
