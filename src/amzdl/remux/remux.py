@@ -277,6 +277,36 @@ def _build_stsz(sizes):
     return _full_box(b"stsz", 0, 0, content)
 
 
+_CODEC_CONFIG_BOXES = (b"mhaC", b"dfLa", b"dOps", b"dec3", b"dac3", b"dac4", b"esds")
+
+
+def _clean_sample_entry(buf, entry_start, entry_end):
+    box_type = bytes(buf[entry_start + 4 : entry_start + 8])
+    audio_fields = bytes(buf[entry_start + 8 : entry_start + AUDIO_SAMPLE_ENTRY_HEADER])
+    children = bytearray()
+    has_config = False
+    for btype, bs, _bc, be in iter_boxes(
+        buf, entry_start + AUDIO_SAMPLE_ENTRY_HEADER, entry_end
+    ):
+        if btype == b"free":
+            continue
+        children += buf[bs:be]
+        if btype in _CODEC_CONFIG_BOXES:
+            has_config = True
+    content = audio_fields + bytes(children)
+    return _box(box_type, content), has_config
+
+
+def _build_stsd(buf, stsd):
+    for _bt, entry_start, _ec, entry_end in iter_boxes(buf, stsd[1] + 8, stsd[2]):
+        if entry_start + AUDIO_SAMPLE_ENTRY_HEADER >= entry_end:
+            continue
+        entry, has_config = _clean_sample_entry(buf, entry_start, entry_end)
+        if has_config:
+            return _full_box(b"stsd", 0, 0, struct.pack(">I", 1) + entry)
+    raise RemuxError("no codec-config sample entry in stsd")
+
+
 def remux_mp4(src_mp4, dst):
     buf, end, moov = _read_mp4(src_mp4)
     mvhd = find_box(buf, moov[1], moov[2], b"mvhd")
@@ -306,7 +336,7 @@ def remux_mp4(src_mp4, dst):
     movie_dur = round(media_dur * movie_ts / media_ts) if media_ts else media_dur
 
     stbl_content = (
-        buf[stsd[0] : stsd[2]]
+        _build_stsd(buf, stsd)
         + _build_stts(durs)
         + _full_box(b"stsc", 0, 0, struct.pack(">IIII", 1, 1, len(sizes), 1))
         + _build_stsz(sizes)
