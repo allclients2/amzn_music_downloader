@@ -300,7 +300,7 @@ read line by line), then each track runs through a sequence of signed calls:
 | **Expansion** | artist `get_page` · `get_catalog_playlist` / `get_user_playlist` | An artist ASIN → its whole discography; a playlist id → its member tracks (catalog or user library) |
 | **Cover art** | `textsearch` (`artOriginal`) | Fetches the full-resolution master image (≈1500–3000 px) instead of the 600×600 render; one search per album |
 | **Manifest** | `getDashManifestsV2` | Returns a DASH MPD (lossless FLAC); audio is downloaded from its `BaseURL` |
-| **Decryption** | `getLicenseForPlaybackV2` | Drives a `pywidevine` challenge with the web `TRACK_PSSH`; the content key feeds the in-process CENC (AES-CTR) decryptor, then a pure-Python remux writes the native container (`.flac` / `.opus` / spatial `.mp4` / `.ac4`) — no `ffmpeg` |
+| **Decryption** | `getLicenseForPlaybackV2` | Drives a `pywidevine` challenge with the web `TRACK_PSSH`; the content key feeds the in-process CENC (AES-CTR) decryptor, then a pure-Python remux writes the native container (`.flac` / `.opus` / spatial `.mp4` / `.ac4`) |
 | **Lyrics** | `getLyricsByTrackAsinBatch` | Time-synced lyrics → embedded `LYRICS` tag + sidecar `.lrc` |
 
 The `amzdl` package (under `src/amzdl/`) is a thin orchestration layer over a single
@@ -337,5 +337,5 @@ For a full traceback on unexpected errors, re-run with `-v`.
 - **[gamdl](https://github.com/glomatico/gamdl)** — inspiration for the whole project, the
   design reference for restoring a protected sample entry (the `frma`/`sinf` strip) that let
   us drop the external `mp4decrypt` dependency, and the reference for the pure-Python MP4
-  (de)muxer that let us drop `ffmpeg` entirely.
+  (de)muxer.
 - **Amazon** — for using a **secure** DRM.
