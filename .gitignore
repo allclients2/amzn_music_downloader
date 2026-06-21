@@ -14,6 +14,9 @@ output
 .vscode
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
 *.bin
 credentials.bin
 .DS_Store
@@ -21,3 +24,5 @@ test.txt
 flow_meta.py
 flows.csv
 flows.mitm
+.ruff_cache
+.vscode

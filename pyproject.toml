@@ -1,5 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "amzn_music_downloader"
-version = "2.9"
-description = "Download tracks and albums from Amazon Music"
-requires-python = ">=3.13"
+name = "amzdl"
+version = "2.10.5"
+authors = [ { name="alcts", email="all_clients@alcts.xyz" } ]
+requires-python = ">=3.10"
+description = "Download tracks, albums, playlists, and artists from Amazon Music"
+readme = "README.md"
+license = "MIT"
+dependencies = [
+    "audible==0.8.2",
+    "beautifulsoup4==4.12.2",
+    "brotli",
+    "httpx==0.23.3",
+    "mutagen",
+    "natsort==8.4.0",
+    "protobuf==4.25.1",
+    "pycryptodome==3.19.0",
+    "python-dateutil",
+    "pywidevine==1.8.0",
+    "requests",
+    "rsa==4.9",
+    "tqdm==4.66.1",
+    "xmltodict==0.13.0",
+]
+
+[project.scripts]
+amzdl = "amzdl.main:main"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=3.5",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["amzdl*", "amazonmusic*"]
+namespaces = true
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["src/amazonmusic"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
