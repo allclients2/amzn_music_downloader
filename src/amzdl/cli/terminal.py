@@ -1,4 +1,6 @@
-"""Raw single-line terminal input for the CLI. `read_long_line` reads Amazon's very long post-login OAuth URLs raw (ICANON/ECHO off) via a platform-specific backend, keeping the prompt a single non-scrolling line."""
+"""Raw single-line terminal input for the CLI. `read_long_line` reads Amazon's
+very long post-login OAuth URLs raw (ICANON/ECHO off) via a platform-specific
+backend, keeping the prompt a single non-scrolling line."""
 
 import sys
 

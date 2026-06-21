@@ -1,4 +1,12 @@
-"""Tag a downloaded track and embed its cover art. `tag_track` dispatches on the container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus, MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`. Mirrors the tag set OrpheusDL's Amazon Music module writes: core fields, an Explicit/Clean RATING, the music.amazon URL (WWW), MERCHANT, reference loudness, a LABEL/PUBLISHER/ORGANIZATION fan-out, and per-role credits parsed from the track xray; plus the project's own ALBUM_REVIEW_AVERAGE/ALBUM_REVIEW_COUNT (album-level customer reviews). All tag names are normalized to UPPERCASE_SNAKE_CASE."""
+"""Tag a downloaded track and embed its cover art. `tag_track` dispatches on the
+container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus,
+MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`. Mirrors the tag set
+OrpheusDL's Amazon Music module writes: core fields, an Explicit/Clean RATING,
+the music.amazon URL (WWW), MERCHANT, reference loudness, a
+LABEL/PUBLISHER/ORGANIZATION fan-out, and per-role credits parsed from the track
+xray; plus the project's own ALBUM_REVIEW_AVERAGE/ALBUM_REVIEW_COUNT
+(album-level customer reviews). All tag names are normalized to
+UPPERCASE_SNAKE_CASE."""
 
 import re
 import tempfile
@@ -34,7 +42,9 @@ def _credit_key(name: str) -> str:
     return "_".join(w.upper() for w in re.findall(r"[A-Za-z0-9]+", spaced))
 
 
-def _prepare_credits(credits: dict | None, track: TrackMetadata) -> dict[str, list[str]]:
+def _prepare_credits(
+    credits: dict | None, track: TrackMetadata
+) -> dict[str, list[str]]:
     grouped: dict[str, list[str]] = {}
     for credit_type, names in (credits or {}).items():
         key = _credit_key(credit_type)
@@ -81,7 +91,9 @@ def download_artwork(url: str, directory: str):
             url,
             timeout=10,
             headers={
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept": (
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                ),
                 "User-Agent": _UA,
             },
         )
@@ -111,8 +123,10 @@ def tag_track(media_path: str, track: TrackMetadata, lyrics, temp_dir: str,
         )
 
 
-def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, artwork_path,
-                                 extra: dict, prepared_credits: dict):
+def embed_metadata_and_cover_mp4(
+    mp4_path: str, track: TrackMetadata, lyrics, artwork_path,
+    extra: dict, prepared_credits: dict,
+):
     from mutagen.mp4 import MP4, MP4Cover
 
     audio = MP4(mp4_path)
@@ -147,7 +161,9 @@ def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, ar
     for name, value in extra.items():
         freeform(name, value)
     for credit_type, names in prepared_credits.items():
-        audio[f"----:com.apple.iTunes:{credit_type}"] = [n.encode("utf-8") for n in names]
+        audio[f"----:com.apple.iTunes:{credit_type}"] = [
+            n.encode("utf-8") for n in names
+        ]
 
     if track.label:
         setv("\xa9pub", track.label)
@@ -163,7 +179,9 @@ def embed_metadata_and_cover_mp4(mp4_path: str, track: TrackMetadata, lyrics, ar
     audio.save()
 
 
-def _set_vorbis_fields(audio, track: TrackMetadata, lyrics, extra: dict, prepared_credits: dict):
+def _set_vorbis_fields(
+    audio, track: TrackMetadata, lyrics, extra: dict, prepared_credits: dict
+):
     def setv(key, value):
         if value is not None and value != "":
             audio[key] = str(value)
@@ -218,8 +236,10 @@ def embed_metadata_and_cover(flac_path: str, track: TrackMetadata, lyrics, artwo
     audio.save()
 
 
-def embed_metadata_and_cover_opus(opus_path: str, track: TrackMetadata, lyrics, artwork_path,
-                                  extra: dict, prepared_credits: dict):
+def embed_metadata_and_cover_opus(
+    opus_path: str, track: TrackMetadata, lyrics, artwork_path,
+    extra: dict, prepared_credits: dict,
+):
     import base64
 
     from mutagen.oggopus import OggOpus
@@ -229,5 +249,7 @@ def embed_metadata_and_cover_opus(opus_path: str, track: TrackMetadata, lyrics, 
     _set_vorbis_fields(audio, track, lyrics, extra, prepared_credits)
     if artwork_path:
         pic = _build_cover_picture(artwork_path)
-        audio["METADATA_BLOCK_PICTURE"] = [base64.b64encode(pic.write()).decode("ascii")]
+        audio["METADATA_BLOCK_PICTURE"] = [
+            base64.b64encode(pic.write()).decode("ascii")
+        ]
     audio.save()

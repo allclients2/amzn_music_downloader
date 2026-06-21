@@ -1,4 +1,9 @@
-"""Local patches over the upstream Amazon Music API submodule. Subclasses the read-only `AmazonMusicMobileAPI` to fix three touch points — forwarding the OAuth callback through the JP Prime Video recursion, silencing the upstream login banner that desyncs the UI redraw, and parsing track-credit role names without the upstream `.title()` collapse so their camelCase word boundaries survive for downstream UPPERCASE_SNAKE_CASE tagging."""
+"""Local patches over the upstream Amazon Music API submodule. Subclasses the
+read-only `AmazonMusicMobileAPI` to fix three touch points — forwarding the
+OAuth callback through the JP Prime Video recursion, silencing the upstream
+login banner that desyncs the UI redraw, and parsing track-credit role names
+without the upstream `.title()` collapse so their camelCase word boundaries
+survive for downstream UPPERCASE_SNAKE_CASE tagging."""
 
 import contextvars
 import typing
@@ -24,7 +29,11 @@ def _make_filtered_print(real_print):
     printer = real_print or print
 
     def _filtered_print(*args, **kwargs):
-        if args and isinstance(args[0], str) and args[0].startswith(_LOGIN_BANNER_PREFIX):
+        if (
+            args
+            and isinstance(args[0], str)
+            and args[0].startswith(_LOGIN_BANNER_PREFIX)
+        ):
             return
         return printer(*args, **kwargs)
 

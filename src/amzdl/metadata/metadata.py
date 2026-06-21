@@ -1,4 +1,7 @@
-"""Track, album, artist & playlist metadata via the submodule API. Resolves an ASIN to a `TrackMetadata` / `AlbumMetadata` / `ArtistMetadata` / `PlaylistMetadata` dataclass using the signed `muse`, `textsearch`, and artist/playlist endpoints (never catalog search)."""
+"""Track, album, artist & playlist metadata via the submodule API. Resolves an
+ASIN to a `TrackMetadata` / `AlbumMetadata` / `ArtistMetadata` /
+`PlaylistMetadata` dataclass using the signed `muse`, `textsearch`, and
+artist/playlist endpoints (never catalog search)."""
 
 import re
 from dataclasses import dataclass, field
@@ -80,7 +83,9 @@ def _ms_to_date(ms) -> str | None:
     if ms in (None, "", 0):
         return None
     try:
-        return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        return datetime.fromtimestamp(
+            int(ms) / 1000, tz=timezone.utc
+        ).strftime("%Y-%m-%d")
     except (TypeError, ValueError, OverflowError, OSError):
         return None
 
@@ -143,7 +148,9 @@ def _hi_res_cover(session: "AmazonMusicMobileAPI", album_data: dict) -> str | No
     )
 
 
-def resolve_track_cover(session: "AmazonMusicMobileAPI", track: "TrackMetadata") -> str | None:
+def resolve_track_cover(
+    session: "AmazonMusicMobileAPI", track: "TrackMetadata"
+) -> str | None:
     return _search_cover(
         session,
         artist=track.album_artist or track.artist or "",
@@ -292,11 +299,15 @@ def fetch_metadata(
 
     track_data = next((t for t in tracks_list if t.get("asin") == content_asin), None)
     album_match = next((a for a in albums_list if a.get("asin") == content_asin), None)
-    artist_match = next((a for a in artists_list if a.get("asin") == content_asin), None)
+    artist_match = next(
+        (a for a in artists_list if a.get("asin") == content_asin), None
+    )
 
     if artist_match or (artists_list and not albums_list and not tracks_list):
         from amzdl.metadata.discography import build_artist
-        return "artist", build_artist(session, artist_match or artists_list[0], content_asin)
+        return "artist", build_artist(
+            session, artist_match or artists_list[0], content_asin
+        )
 
     if track_data or (tracks_list and not album_match):
         track_data = track_data or tracks_list[0]
@@ -324,7 +335,8 @@ def fetch_metadata(
         if playlist is not None:
             return "playlist", playlist
         raise ValueError(
-            f"ASIN {content_asin} did not resolve to a track, album, artist, or playlist"
+            f"ASIN {content_asin} did not resolve to a track, album, artist, "
+            "or playlist"
         )
 
     disc_total = _disc_total(album_data)

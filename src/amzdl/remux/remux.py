@@ -1,4 +1,14 @@
-"""Pure-Python remux — FLAC: lifts the `dfLa` metadata blocks out of the decrypted fragmented MP4 into a native FLAC metadata section (STREAMINFO first, last-block flag fixed up) and concatenates every sample (one coded FLAC frame). Opus: rebuilds the OpusHead from the `dOps` box and re-frames each sample (one Opus packet) into Ogg pages (proper lacing, Ogg CRC32, 48 kHz granule positions). MP4 (spatial E-AC-3/MPEG-H): flattens the fragmented MP4 into a plain MP4 — keeps the codec `stsd`, rebuilds the `stts`/`stsc`/`stsz`/`stco` sample tables from the fragments into one chunk, patches the movie/track/media durations, and drops `mvex`. AC-4: writes the raw `.ac4` elementary stream, wrapping each sample in an `0xAC40` sync frame (syncword + frame size). All reuse the MP4 box/sample parsing from `mp4`."""
+"""Pure-Python remux — FLAC: lifts the `dfLa` metadata blocks out of the
+decrypted fragmented MP4 into a native FLAC metadata section (STREAMINFO first,
+last-block flag fixed up) and concatenates every sample (one coded FLAC frame).
+Opus: rebuilds the OpusHead from the `dOps` box and re-frames each sample (one
+Opus packet) into Ogg pages (proper lacing, Ogg CRC32, 48 kHz granule
+positions). MP4 (spatial E-AC-3/MPEG-H): flattens the fragmented MP4 into a
+plain MP4 — keeps the codec `stsd`, rebuilds the `stts`/`stsc`/`stsz`/`stco`
+sample tables from the fragments into one chunk, patches the movie/track/media
+durations, and drops `mvex`. AC-4: writes the raw `.ac4` elementary stream,
+wrapping each sample in an `0xAC40` sync frame (syncword + frame size). All
+reuse the MP4 box/sample parsing from `mp4`."""
 
 import struct
 
@@ -217,7 +227,9 @@ def remux_opus(src_mp4, dst):
     if dops is None:
         raise RemuxError("no dOps box found (track is not Opus)")
     head, preskip = _opus_head(buf[dops[1] : dops[2]])
-    samples = [(buf[pos : pos + size], dur) for pos, size, dur in _iter_samples(buf, end)]
+    samples = [
+        (buf[pos : pos + size], dur) for pos, size, dur in _iter_samples(buf, end)
+    ]
     if not samples:
         raise RemuxError("no audio samples found")
     with open(dst, "wb") as out:
@@ -233,7 +245,9 @@ def _full_box(box_type, version, flags, content):
     return _box(box_type, bytes([version]) + flags.to_bytes(3, "big") + content)
 
 
-_MP4_FTYP = _box(b"ftyp", b"isom" + struct.pack(">I", 0x200) + b"isom" + b"iso2" + b"mp41")
+_MP4_FTYP = _box(
+    b"ftyp", b"isom" + struct.pack(">I", 0x200) + b"isom" + b"iso2" + b"mp41"
+)
 
 
 def _rebuild(buf, content_start, end, transforms, drop=()):
@@ -273,7 +287,9 @@ def _build_stts(durs):
 
 
 def _build_stsz(sizes):
-    content = struct.pack(">II", 0, len(sizes)) + b"".join(struct.pack(">I", s) for s in sizes)
+    content = struct.pack(">II", 0, len(sizes)) + b"".join(
+        struct.pack(">I", s) for s in sizes
+    )
     return _full_box(b"stsz", 0, 0, content)
 
 

@@ -1,4 +1,7 @@
-"""Persistent configuration for the downloader. Manages the `config/` folder (`config.json` defaults plus the `accounts` registry and pickled `credentials.bin`) and resolves its location across repo-checkout and installed layouts."""
+"""Persistent configuration for the downloader. Manages the `config/` folder
+(`config.json` defaults plus the `accounts` registry and pickled
+`credentials.bin`) and resolves its location across repo-checkout and installed
+layouts."""
 
 import copy
 import json

@@ -1,4 +1,7 @@
-"""Offline smoke test for the CLI. Drives the real `main.download()` flow and `Progress` bar with auth, metadata, manifest, lyrics and the download pipeline all replaced with fakes, across five modes matching `run_download()`'s branches."""
+"""Offline smoke test for the CLI. Drives the real `main.download()` flow and
+`Progress` bar with auth, metadata, manifest, lyrics and the download pipeline
+all replaced with fakes, across five modes matching `run_download()`'s
+branches."""
 
 import asyncio
 import os
@@ -108,7 +111,9 @@ def _fake_playlist_metadata(session, asin, defer_track_cover=False, type_hint=No
     track_asins = [f"{asin}T{i:02d}" for i in range(1, n + 1)]
     tracks = [] if defer_playlist_tracks else [
         _make_track(a, title, track_number=i, total_tracks=n)
-        for i, (a, title) in enumerate(zip(track_asins, _ALBUM_TRACKS, strict=False), start=1)
+        for i, (a, title) in enumerate(
+            zip(track_asins, _ALBUM_TRACKS, strict=False), start=1
+        )
     ]
     return "playlist", PlaylistMetadata(
         name="Fake Playlist: A Marquee Example Mix", asin=asin,
@@ -205,7 +210,9 @@ def main_test():
     playlist = "--playlist" in argv
     artist = "--artist" in argv
     batch = "--batch" in argv
-    argv = [a for a in argv if a not in ("--album", "--playlist", "--artist", "--batch")]
+    argv = [
+        a for a in argv if a not in ("--album", "--playlist", "--artist", "--batch")
+    ]
 
     if batch:
         default_asin, fake_metadata = None, _fake_batch_metadata

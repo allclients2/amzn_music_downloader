@@ -1,4 +1,6 @@
-"""Lyrics parsing for the music-xray-service response. Parses `get_track_lyrics()` into synced lines, falling back to any plain-text field for regions/tracks that return an unsynced-only payload."""
+"""Lyrics parsing for the music-xray-service response. Parses
+`get_track_lyrics()` into synced lines, falling back to any plain-text field for
+regions/tracks that return an unsynced-only payload."""
 
 from dataclasses import dataclass
 

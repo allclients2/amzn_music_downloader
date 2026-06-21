@@ -1,4 +1,7 @@
-"""Authentication for the Amazon Music downloader. Builds the single signed `AmazonMusicMobileAPI` session every stage shares, performing interactive browser OAuth on first run and persisting per-`customer_id` credentials to `config/credentials.bin`."""
+"""Authentication for the Amazon Music downloader. Builds the single signed
+`AmazonMusicMobileAPI` session every stage shares, performing interactive
+browser OAuth on first run and persisting per-`customer_id` credentials to
+`config/credentials.bin`."""
 
 import os
 import pickle
@@ -19,7 +22,9 @@ class _CompatUnpickler(pickle.Unpickler):
             module = "amazonmusic" + module[len("vendor.amazonmusic"):]
         return super().find_class(module, name)
 
-CREDENTIALS_FILE = Path(os.environ.get("AMZ_CREDENTIALS_FILE", str(config.CREDENTIALS_FILE)))
+CREDENTIALS_FILE = Path(
+    os.environ.get("AMZ_CREDENTIALS_FILE", str(config.CREDENTIALS_FILE))
+)
 _LEGACY_CREDENTIALS_FILE = Path("credentials.bin")
 
 
@@ -95,7 +100,9 @@ def _cli_oauth_callback(oauth_url: str, application_name: str, country: str) -> 
 def login(country: str) -> AmazonMusicMobileAPI:
     country = (country or "").strip().upper()
     if len(country) != 2:
-        raise ValueError("Country must be a 2-letter ISO 3166-1 code (e.g. US, GB, JP).")
+        raise ValueError(
+            "Country must be a 2-letter ISO 3166-1 code (e.g. US, GB, JP)."
+        )
     AmazonRegion.get_region_by_country(country)
 
     inst = AmazonMusicMobileAPI.login_via_mobile(

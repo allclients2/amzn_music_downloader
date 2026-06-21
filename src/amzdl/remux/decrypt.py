@@ -1,4 +1,7 @@
-"""In-process CENC (Widevine) decryption — the pure-Python replacement for `mp4decrypt`. Decrypts the AES-CTR fragmented MP4 in place using the recovered content key, renaming the encryption-signalling boxes to `free` so no byte ever moves."""
+"""In-process CENC (Widevine) decryption — the pure-Python replacement for
+`mp4decrypt`. Decrypts the AES-CTR fragmented MP4 in place using the recovered
+content key, renaming the encryption-signalling boxes to `free` so no byte ever
+moves."""
 
 import logging
 import struct
@@ -69,7 +72,8 @@ def _prepare_moov(buf, moov_content, moov_end):
             scheme = bytes(buf[schm[1] + 4 : schm[1] + 8])
             if scheme != b"cenc":
                 raise DecryptError(
-                    f"unsupported protection scheme {scheme!r}; only cenc (AES-CTR) is supported"
+                    f"unsupported protection scheme {scheme!r}; "
+                    "only cenc (AES-CTR) is supported"
                 )
 
         tenc = find_path(buf, sinf[1], sinf[2], b"schi", b"tenc")
@@ -129,7 +133,9 @@ def _decrypt_sample(buf, pos, size, iv16, subsamples, key):
             off += enc
 
 
-def _process_traf(buf, traf_start, traf_content, traf_end, moof_start, iv_size, constant_iv, key):
+def _process_traf(
+    buf, traf_start, traf_content, traf_end, moof_start, iv_size, constant_iv, key
+):
     tfhd = find_box(buf, traf_content, traf_end, b"tfhd")
     if tfhd is None:
         return
@@ -156,16 +162,18 @@ def _process_traf(buf, traf_start, traf_content, traf_end, moof_start, iv_size, 
             else:
                 iv, subsamples = b"", []
             if iv or constant_iv:
-                _decrypt_sample(buf, pos, size, _ctr_iv(iv, constant_iv), subsamples, key)
+                _decrypt_sample(
+                    buf, pos, size, _ctr_iv(iv, constant_iv), subsamples, key
+                )
             pos += size
             sample_index += 1
 
     for btype, box_start, b_content, _b_end in iter_boxes(buf, traf_content, traf_end):
-        if btype in _PROTECTION_BOXES:
+        if btype in _PROTECTION_BOXES or (
+            btype in (b"sbgp", b"sgpd")
+            and bytes(buf[b_content + 4 : b_content + 8]) == b"seig"
+        ):
             buf[box_start + 4 : box_start + 8] = b"free"
-        elif btype in (b"sbgp", b"sgpd"):
-            if bytes(buf[b_content + 4 : b_content + 8]) == b"seig":
-                buf[box_start + 4 : box_start + 8] = b"free"
 
 
 def decrypt_mp4(encrypted_path, key, output_path):

@@ -110,7 +110,9 @@ async def run_search(args):
     wvd_path = config.resolve_wvd_path(args.wvd_path)
     output_dir = Path(args.output or settings["default_output"]).expanduser()
     concurrency = settings["default_concurrency"]
-    metadata_concurrency = args.metadata_concurrency or settings["default_metadata_concurrency"]
+    metadata_concurrency = (
+        args.metadata_concurrency or settings["default_metadata_concurrency"]
+    )
     limit = args.search_limit or settings["default_search_limit"]
 
     session = auth.get_session(account=args.account)
@@ -122,7 +124,9 @@ async def run_search(args):
     if search_type is None:
         search_type = prompts.prompt_search_type(tuple(SEARCH_TYPES))
 
-    results = await asyncio.to_thread(search_catalog, session, query, search_type, limit)
+    results = await asyncio.to_thread(
+        search_catalog, session, query, search_type, limit
+    )
     if not results:
         cli.note(f"No {search_type}s found for '{query}'.")
         return
@@ -149,7 +153,9 @@ async def run_download(args):
     wvd_path = config.resolve_wvd_path(args.wvd_path)
     output_dir = Path(args.output or settings["default_output"]).expanduser()
     concurrency = settings["default_concurrency"]
-    metadata_concurrency = args.metadata_concurrency or settings["default_metadata_concurrency"]
+    metadata_concurrency = (
+        args.metadata_concurrency or settings["default_metadata_concurrency"]
+    )
 
     try:
         asins = links.resolve_inputs(args.content_asin)
@@ -164,7 +170,11 @@ async def run_download(args):
         cli.print_error(f"Widevine device not found: {wvd_path}")
         sys.exit(1)
 
-    hint = links.hint(args.content_asin) if settings["use_link_hints"] else links.LinkHint()
+    hint = (
+        links.hint(args.content_asin)
+        if settings["use_link_hints"]
+        else links.LinkHint()
+    )
 
     session = auth.get_session(account=args.account, country_hint=hint.country)
 

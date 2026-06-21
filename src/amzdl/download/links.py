@@ -1,4 +1,7 @@
-"""Resolve a download argument — a bare ASIN, an Amazon Music link, or a text file of either — to the list of content ids the pipeline runs over. Link parsing mirrors the submodule's `custom_url_parse` (the `trackAsin` query param wins, else the path segment after the type keyword)."""
+"""Resolve a download argument — a bare ASIN, an Amazon Music link, or a text
+file of either — to the list of content ids the pipeline runs over. Link parsing
+mirrors the submodule's `custom_url_parse` (the `trackAsin` query param wins,
+else the path segment after the type keyword)."""
 
 import functools
 import re
@@ -49,7 +52,11 @@ def _tld_to_country() -> dict:
     for country, region in AmazonRegion.get_known_regions().items():
         by_tld.setdefault(region.domain_tld, []).append(country)
     return {
-        tld: (_TLD_PRIMARY.get(tld, countries[0]) if len(countries) > 1 else countries[0])
+        tld: (
+            _TLD_PRIMARY.get(tld, countries[0])
+            if len(countries) > 1
+            else countries[0]
+        )
         for tld, countries in by_tld.items()
     }
 
@@ -89,7 +96,9 @@ def hint(raw: str) -> LinkHint:
         url = urlparse(item)
     except ValueError:
         return LinkHint()
-    return LinkHint(type=_type_from_url(url), country=_country_from_host(url.hostname or ""))
+    return LinkHint(
+        type=_type_from_url(url), country=_country_from_host(url.hostname or "")
+    )
 
 
 def type_hint(raw: str) -> str | None:

@@ -1,4 +1,6 @@
-"""Console UI kit — the single source of truth for the CLI's look. Owns the palette, tree markers, one-screen-at-a-time bookkeeping, and the bar-aware log handler that every interactive surface shares."""
+"""Console UI kit — the single source of truth for the CLI's look. Owns the
+palette, tree markers, one-screen-at-a-time bookkeeping, and the bar-aware log
+handler that every interactive surface shares."""
 
 import logging
 import re

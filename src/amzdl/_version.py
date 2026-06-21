@@ -1,4 +1,5 @@
-"""Resolve the package version. Prefers the installed distribution's metadata, falling back to reading `pyproject.toml` for a bare source checkout."""
+"""Resolve the package version. Prefers the installed distribution's metadata,
+falling back to reading `pyproject.toml` for a bare source checkout."""
 
 import re
 from importlib.metadata import PackageNotFoundError, version

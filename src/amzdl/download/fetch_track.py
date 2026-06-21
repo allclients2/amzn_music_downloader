@@ -1,4 +1,7 @@
-"""Download, decrypt, remux, and tag a single track. Each codec is stream-copied into its natural container (HD/UHD FLAC, lossy Opus, or the spatial `.mp4`/`.ac4` tiers) and filed at `<output_dir>/<album_artist>/<album>/<disc> - <track> <title>.<ext>`."""
+"""Download, decrypt, remux, and tag a single track. Each codec is stream-copied
+into its natural container (HD/UHD FLAC, lossy Opus, or the spatial
+`.mp4`/`.ac4` tiers) and filed at
+`<output_dir>/<album_artist>/<album>/<disc> - <track> <title>.<ext>`."""
 
 import asyncio
 import logging
@@ -130,7 +133,9 @@ async def process_track(
 
     existing = _existing_download(track_output_dir, output_filename)
     if existing is not None:
-        _log.info("file %s already exists (%s); skipping.", output_filename, existing.suffix)
+        _log.info(
+            "file %s already exists (%s); skipping.", output_filename, existing.suffix
+        )
         return True
 
     base_temp = output_dir / _TEMP_SUBDIR
@@ -139,12 +144,18 @@ async def process_track(
     encrypted_file = temp_dir / "encrypted.mp4"
 
     def fetch_cover():
-        url = resolve_track_cover(session, track) if resolve_hi_res_cover else track.cover_url
+        url = (
+            resolve_track_cover(session, track)
+            if resolve_hi_res_cover
+            else track.cover_url
+        )
         return download_artwork(url, str(temp_dir))
 
     step("downloading track")
     coros = [
-        asyncio.to_thread(Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path),
+        asyncio.to_thread(
+            Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path
+        ),
         asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
         asyncio.to_thread(fetch_cover),
         asyncio.to_thread(_fetch_credits, session, track.asin),
@@ -175,7 +186,8 @@ async def process_track(
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
     await asyncio.to_thread(
-        tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode, artwork_path,
+        tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode,
+        artwork_path,
         _track_url(session, track), credits, rep.get("reference_loudness"),
     )
 
@@ -200,7 +212,9 @@ async def fetch_track(
 ):
     if on_step:
         on_step("fetching manifest")
-    representation = await asyncio.to_thread(find_representation, session, track.asin, quality)
+    representation = await asyncio.to_thread(
+        find_representation, session, track.asin, quality
+    )
     return await process_track(
         session, track, representation, output_dir, build_folder_structure,
         on_step=on_step, wvd_path=wvd_path,

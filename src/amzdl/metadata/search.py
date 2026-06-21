@@ -1,4 +1,6 @@
-"""Catalog search via the `textsearch` API. Resolves a free-text query to a short list of `SearchResult`s (track, album, artist, or playlist) whose chosen ASIN feeds straight into the normal download pipeline."""
+"""Catalog search via the `textsearch` API. Resolves a free-text query to a
+short list of `SearchResult`s (track, album, artist, or playlist) whose chosen
+ASIN feeds straight into the normal download pipeline."""
 
 from dataclasses import dataclass
 

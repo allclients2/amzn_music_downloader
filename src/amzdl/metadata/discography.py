@@ -1,4 +1,7 @@
-"""Artist discography discovery via submodule endpoints (no catalog search). Harvests an artist's album ASINs from its `get_page("artist/<asin>")` catalog page and the `chronological-albums` shoveler into the `ArtistMetadata` the pipeline expands."""
+"""Artist discography discovery via submodule endpoints (no catalog search).
+Harvests an artist's album ASINs from its `get_page("artist/<asin>")` catalog
+page and the `chronological-albums` shoveler into the `ArtistMetadata` the
+pipeline expands."""
 
 
 import logging

@@ -1,4 +1,7 @@
-"""Widevine content-key acquisition. Builds a `pywidevine` license challenge from a provisioned device file, exchanges it through the signed `getLicenseForPlaybackV2` endpoint, and returns the `kid:key` content key for the CENC decryptor."""
+"""Widevine content-key acquisition. Builds a `pywidevine` license challenge
+from a provisioned device file, exchanges it through the signed
+`getLicenseForPlaybackV2` endpoint, and returns the `kid:key` content key for
+the CENC decryptor."""
 
 import base64
 import logging
@@ -15,7 +18,9 @@ _log = logging.getLogger("downloader.keys")
 
 class Keys:
     @staticmethod
-    def getContentKeys(session, asin: str, psshStr: str, wvd_path: str | None = None) -> str:
+    def getContentKeys(
+        session, asin: str, psshStr: str, wvd_path: str | None = None
+    ) -> str:
         pssh = PSSH(psshStr)
 
         if wvd_path and Path(wvd_path).expanduser().exists():

@@ -1,4 +1,6 @@
-"""DASH manifest retrieval, parsing, and stream selection. Fetches the manifest from `getDashManifestsV2`, parses it into representations, and picks one by quality tier (using the web TRACK_PSSH block, the one with no `value`)."""
+"""DASH manifest retrieval, parsing, and stream selection. Fetches the manifest
+from `getDashManifestsV2`, parses it into representations, and picks one by
+quality tier (using the web TRACK_PSSH block, the one with no `value`)."""
 
 import logging
 import xml.etree.ElementTree as ET
@@ -118,7 +120,9 @@ def select_representation(track_asin: str, representations: list, quality):
 
     kind, tier, level = _parse_quality(quality)
     if kind is None:
-        _log.warning("unknown quality %r; falling back to %s", quality, _DEFAULT_QUALITY)
+        _log.warning(
+            "unknown quality %r; falling back to %s", quality, _DEFAULT_QUALITY
+        )
         kind, tier, level = "LINEAR", _DEFAULT_QUALITY, None
 
     if kind == "LINEAR":
@@ -126,7 +130,9 @@ def select_representation(track_asin: str, representations: list, quality):
     else:
         rep = _select_spatial(representations, kind, level)
         if rep is None:
-            _log.warning("no %s stream for %s; falling back to best FLAC", kind, track_asin)
+            _log.warning(
+                "no %s stream for %s; falling back to best FLAC", kind, track_asin
+            )
             rep = _select_linear(representations, "UHD", None)
 
     if rep is None:
@@ -167,7 +173,10 @@ def parse_mpd(raw_xml: str):
         for prop in adaptation.findall("mpd:SupplementalProperty", _NS):
             if prop.attrib.get("schemeIdUri") == "amz-music:trackType":
                 track_type = prop.attrib.get("value")
-            elif prop.attrib.get("schemeIdUri") == "urn:mpeg:mpegB:cicp:ProgramLoudness":
+            elif (
+                prop.attrib.get("schemeIdUri")
+                == "urn:mpeg:mpegB:cicp:ProgramLoudness"
+            ):
                 reference_loudness = prop.attrib.get("value")
 
         adaptation_pssh = _web_pssh(adaptation)
@@ -178,7 +187,9 @@ def parse_mpd(raw_xml: str):
                 continue
 
             seglist = rep.find("mpd:SegmentList", _NS)
-            segments = seglist.findall("mpd:SegmentURL", _NS) if seglist is not None else []
+            segments = (
+                seglist.findall("mpd:SegmentURL", _NS) if seglist is not None else []
+            )
 
             representations.append({
                 "id": rep.attrib.get("id"),

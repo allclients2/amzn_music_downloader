@@ -1,4 +1,11 @@
-"""Enforce the project convention that explanatory comments and docstrings live only at the top of a file. A single module-level docstring is allowed; a shebang/encoding line and tooling-directive comments (`# noqa`, `# type:`, `# ruff:`, `# pragma:`) are exempt. Any other `#` comment, or a docstring on a function/class/method, is reported as an error. Run as a pre-commit hook over the amzdl sources (the amazonmusic submodule is excluded by the hook's file filter). Filenames are passed as argv; exits non-zero if any violation is found."""
+"""Enforce the project convention that explanatory comments and docstrings live
+only at the top of a file. A single module-level docstring is allowed; a
+shebang/encoding line and tooling-directive comments (`# noqa`, `# type:`,
+`# ruff:`, `# pragma:`) are exempt. Any other `#` comment, or a docstring on a
+function/class/method, is reported as an error. Run as a pre-commit hook over
+the amzdl sources (the amazonmusic submodule is excluded by the hook's file
+filter). Filenames are passed as argv; exits non-zero if any violation is
+found."""
 
 import ast
 import sys
@@ -21,9 +28,17 @@ def _comment_violations(path):
         if token.start == (1, 0) and token.string.startswith("#!"):
             continue
         body = token.string.lstrip("#").strip()
-        if body.startswith(_DIRECTIVE_PREFIXES) or "coding:" in body or "coding=" in body:
+        if (
+            body.startswith(_DIRECTIVE_PREFIXES)
+            or "coding:" in body
+            or "coding=" in body
+        ):
             continue
-        found.append((token.start[0], "inline comment is not allowed (only a top-of-file module docstring is permitted)"))
+        found.append((
+            token.start[0],
+            "inline comment is not allowed "
+            "(only a top-of-file module docstring is permitted)",
+        ))
     return found
 
 
@@ -39,7 +54,11 @@ def _docstring_violations(path):
             continue
         if ast.get_docstring(node, clean=False) is not None:
             line = node.body[0].lineno
-            found.append((line, f"docstring on {node.name!r} is not allowed (only a top-of-file module docstring is permitted)"))
+            found.append((
+                line,
+                f"docstring on {node.name!r} is not allowed "
+                "(only a top-of-file module docstring is permitted)",
+            ))
     return found
 
 

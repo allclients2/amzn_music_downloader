@@ -1,4 +1,8 @@
-"""Shared MP4 (ISOBMFF) box parsing — the box-walking and fragment-header helpers common to `decrypt` and `remux`: generic box iteration/lookup (`iter_boxes`/`find_box`/`find_path`), the audio sample-entry header size, and `tfhd`/`trun` parsing (track-fragment defaults + per-sample sizes and 48 kHz durations)."""
+"""Shared MP4 (ISOBMFF) box parsing — the box-walking and fragment-header
+helpers common to `decrypt` and `remux`: generic box iteration/lookup
+(`iter_boxes`/`find_box`/`find_path`), the audio sample-entry header size, and
+`tfhd`/`trun` parsing (track-fragment defaults + per-sample sizes and 48 kHz
+durations)."""
 
 import struct
 

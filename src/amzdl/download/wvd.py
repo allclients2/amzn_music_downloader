@@ -1,4 +1,6 @@
-"""Embedded provisioned Widevine device (base64 of a .wvd); the built-in CDM default when no --wvd-path is supplied. Sourced from an Android 16 Virtual Device running in Android Studio."""
+"""Embedded provisioned Widevine device (base64 of a .wvd); the built-in CDM
+default when no --wvd-path is supplied. Sourced from an Android 16 Virtual
+Device running in Android Studio."""
 
 WVD = (
     "V1ZEAgIDAASoMIIEpAIBAAKCAQEAzCe5LjG/Kjy/LYiEG0HSG/+R0XHNJ9/qS0eEFsSNtAy4bpR4c0xSz+kHBFdEHQzu8dPD+DZGz4O2Az4BuAu7r6LzVw6X"

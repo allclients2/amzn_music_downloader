@@ -1,4 +1,6 @@
-"""Static CLI screens: account selection, login, region, and search pickers. Composes the palette and one-screen-at-a-time bookkeeping from `cli` into the interactive wizard screens."""
+"""Static CLI screens: account selection, login, region, and search pickers.
+Composes the palette and one-screen-at-a-time bookkeeping from `cli` into the
+interactive wizard screens."""
 
 from amzdl.cli import cli
 from amzdl.cli.cli import MARK_CLOSE, MARK_TEE, RED, YELLOW, faint, header, paint
@@ -8,7 +10,11 @@ from amzdl.cli.terminal import read_long_line
 def _account_row(name: str, region: str, index: int | None = None,
                  marker: str | None = None) -> str:
     mark = marker or MARK_TEE
-    label = f"{faint('[')}{paint(str(index), YELLOW)}{faint(']')} " if index is not None else ""
+    label = (
+        f"{faint('[')}{paint(str(index), YELLOW)}{faint(']')} "
+        if index is not None
+        else ""
+    )
     return f"{mark} {label}{name}{faint(' — ')}{region}"
 
 
@@ -39,7 +45,10 @@ def prompt_manage_account(options: list[tuple[str, str]]) -> int | str:
     for i, (name, region) in enumerate(options, 1):
         cli._emit(_account_row(name, region, index=i))
     n = len(options)
-    prompt = f"{MARK_CLOSE} {faint(f'Select [1-{n}] to remove, A to add, or Q to quit: ')}"
+    prompt = (
+        f"{MARK_CLOSE} "
+        f"{faint(f'Select [1-{n}] to remove, A to add, or Q to quit: ')}"
+    )
     while True:
         raw = cli._read(prompt).strip().lower()
         if raw in ("q", ""):
@@ -61,7 +70,9 @@ def confirm_delete(name: str, region: str) -> bool:
 def prompt_oauth_url(app_title: str, url: str) -> str:
     step1 = faint("1. Open this URL: ")
     step2 = faint("2. After signing in you'll land on a blank / 'page not found' page.")
-    step3 = faint("3. Copy that page's FULL URL from the address bar and paste it below.")
+    step3 = faint(
+        "3. Copy that page's FULL URL from the address bar and paste it below."
+    )
     cli._erase_pending()
     cli._emit(header(f"Sign-in: {app_title}"))
     cli._emit(f"{MARK_TEE} {step1}{url}")

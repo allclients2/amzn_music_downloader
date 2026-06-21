@@ -127,7 +127,10 @@ class Progress:
             self.album_start = time.time()
             self._slots = []
             cw = len(str(self.track_total))
-            sample = f"{self.track_total:>{cw}}/{self.track_total}  [00:00<00:00,  0.0 {rate_label}]"
+            sample = (
+                f"{self.track_total:>{cw}}/{self.track_total}"
+                f"  [00:00<00:00,  0.0 {rate_label}]"
+            )
             self._agg_reserve = _disp_width(sample)
         self.render()
 
@@ -215,7 +218,9 @@ class Progress:
             return ""
         prefix_w = 2 + _disp_width(_BRAND_TEXT) + 3 + _disp_width(self.asin) + 3
         avail = term_w - prefix_w
-        return _truncate(self.name, avail) if self.done else self._marquee(self.name, avail)
+        if self.done:
+            return _truncate(self.name, avail)
+        return self._marquee(self.name, avail)
 
     def _header(self, term_w: int) -> str:
         parts = [_BRAND, _paint(self.asin, _YELLOW)]
@@ -251,7 +256,8 @@ class Progress:
             rate = self.completed / elapsed if elapsed > 0 else 0.0
             eta = (self.track_total - self.completed) / rate if rate > 0 else 0.0
             suffix = _paint(
-                f"{count}  [{_fmt_time(elapsed)}<{_fmt_time(eta)}, {rate:4.1f} {self._rate_label}]",
+                f"{count}  [{_fmt_time(elapsed)}<{_fmt_time(eta)}, "
+                f"{rate:4.1f} {self._rate_label}]",
                 _FAINT,
             )
         overhead = _disp_width(_AGG_MARK) + 1 + len(pct) + 1 + 1 + self._agg_reserve
@@ -288,7 +294,10 @@ class Progress:
             print(f"{_HEADER_MARK} done | {self.name or self.asin}")
         elif self._album:
             pct = int(self._agg_frac() * 100)
-            print(f"{_HEADER_MARK} {pct:>3}% | {self.completed}/{self.track_total} | {self.desc}")
+            print(
+                f"{_HEADER_MARK} {pct:>3}% | "
+                f"{self.completed}/{self.track_total} | {self.desc}"
+            )
         else:
             pct = int(min(1.0, self.n / self.steps_total) * 100)
             print(f"{_HEADER_MARK} {pct:>3}% | {_truncate(self.desc, _DESC_MAX)}")

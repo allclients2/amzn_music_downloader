@@ -1,4 +1,7 @@
-"""Playlist resolution via submodule endpoints (catalog and user/library). Members come from `get_catalog_playlist` or `get_user_playlist` and are built into full `TrackMetadata` that keep their own album tags, so tracks still land under `<album_artist>/<album>/`."""
+"""Playlist resolution via submodule endpoints (catalog and user/library).
+Members come from `get_catalog_playlist` or `get_user_playlist` and are built
+into full `TrackMetadata` that keep their own album tags, so tracks still land
+under `<album_artist>/<album>/`."""
 
 
 from amazonmusic.azapi import AmazonMusicMobileAPI
@@ -43,7 +46,9 @@ def _build_tracks_from_asins(
         if album_asin not in cover_cache:
             cover_cache[album_asin] = _hi_res_cover(session, album_data)
         tracks.append(
-            _build_track(td, album_data, _disc_total(album_data), cover_cache[album_asin])
+            _build_track(
+                td, album_data, _disc_total(album_data), cover_cache[album_asin]
+            )
         )
     return tracks
 

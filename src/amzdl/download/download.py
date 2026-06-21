@@ -1,4 +1,7 @@
-"""Download orchestration: dispatch an ASIN/batch to the right concurrency layout. `download()` resolves one input's kind and routes it (single track / album / artist / playlist); `download_batch()` runs a text file's inputs through the same two-phase bar."""
+"""Download orchestration: dispatch an ASIN/batch to the right concurrency
+layout. `download()` resolves one input's kind and routes it (single track /
+album / artist / playlist); `download_batch()` runs a text file's inputs through
+the same two-phase bar."""
 
 import asyncio
 import logging
@@ -98,7 +101,9 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
             representation = select_representation(meta.asin, representations, quality)
             lyrics_resp = None if isinstance(lyrics_res, Exception) else lyrics_res
             if meta.asin != asin and not _has_lyrics(lyrics_resp):
-                lyrics_resp = await asyncio.to_thread(session.get_track_lyrics, meta.asin)
+                lyrics_resp = await asyncio.to_thread(
+                    session.get_track_lyrics, meta.asin
+                )
             skipped = await process_track(
                 session, meta, representation, output_dir, True, lyrics_resp,
                 on_step=lambda desc: prog.update(desc), wvd_path=wvd_path,
@@ -121,7 +126,9 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
         purge_temp_dir(output_dir)
 
 
-async def _run_tracks(prog, session, tracks, output_dir, quality, wvd_path, concurrency):
+async def _run_tracks(
+    prog, session, tracks, output_dir, quality, wvd_path, concurrency
+):
     sem = asyncio.Semaphore(concurrency)
 
     async def run_track(track):
@@ -146,7 +153,9 @@ async def _artist_tracks(session, artist, metadata_concurrency, on_album=None):
     async def fetch_one(album_asin):
         async with sem:
             try:
-                kind, meta = await asyncio.to_thread(fetch_metadata, session, album_asin)
+                kind, meta = await asyncio.to_thread(
+                    fetch_metadata, session, album_asin
+                )
                 if kind == "album" and getattr(meta, "tracks", None):
                     metas.append(meta)
             except Exception:
@@ -218,7 +227,8 @@ async def _playlist_member_meta(session, track_asins, metadata_concurrency):
                 tracks, alb = await asyncio.to_thread(fetch_meta_chunk, session, chunk)
             except Exception:
                 _log.warning(
-                    "playlist member metadata fetch failed for %d track(s); skipping them",
+                    "playlist member metadata fetch failed for %d track(s); "
+                    "skipping them",
                     len(chunk), exc_info=True,
                 )
                 return
@@ -258,7 +268,9 @@ async def _build_playlist_tracks(session, rich, albums, by_album, track_asins,
                 disc_total = _disc_total(album_data)
                 for asin in members:
                     if asin in rich:
-                        built[asin] = _build_track(rich[asin], album_data, disc_total, cover)
+                        built[asin] = _build_track(
+                            rich[asin], album_data, disc_total, cover
+                        )
         finally:
             if on_album:
                 on_album()
