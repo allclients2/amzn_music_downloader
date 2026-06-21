@@ -25,3 +25,4 @@ flow_meta.py
 flows.csv
 flows.mitm
 .ruff_cache
+.vscode
