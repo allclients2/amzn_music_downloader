@@ -28,8 +28,10 @@ def _split_credit_names(name: str) -> list[str]:
 
 
 def _credit_key(name: str) -> str:
-    cleaned = "".join(ch for ch in str(name) if 0x20 <= ord(ch) <= 0x7D and ch != "=")
-    return cleaned.strip().upper()
+    spaced = str(name).replace("&", " and ")
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", spaced)
+    spaced = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", spaced)
+    return "_".join(w.upper() for w in re.findall(r"[A-Za-z0-9]+", spaced))
 
 
 def _prepare_credits(credits: dict | None, track: TrackMetadata) -> dict[str, list[str]]:

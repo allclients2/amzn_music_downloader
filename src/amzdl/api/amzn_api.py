@@ -1,10 +1,17 @@
-"""Local patches over the upstream Amazon Music API submodule. Subclasses the read-only `AmazonMusicMobileAPI` to fix two login touch points — forwarding the OAuth callback through the JP Prime Video recursion, and silencing the upstream login banner that desyncs the UI redraw."""
+"""Local patches over the upstream Amazon Music API submodule. Subclasses the read-only `AmazonMusicMobileAPI` to fix three touch points — forwarding the OAuth callback through the JP Prime Video recursion, silencing the upstream login banner that desyncs the UI redraw, and parsing track-credit role names without the upstream `.title()` collapse so their camelCase word boundaries survive for downstream UPPERCASE_SNAKE_CASE tagging."""
 
 import contextvars
 import typing
 
 import amazonmusic.azapi as _az
 from amazonmusic.azapi import AmazonMusicMobileAPI as _BaseAPI
+
+_PROPER_CREDIT_NAMES = {
+    "Performed By": "Performer",
+    "Written By": "Lyricist",
+    "Produced By": "Producer",
+    "Music Publisher": "Publisher",
+}
 
 _oauth_callback: "contextvars.ContextVar[typing.Callable[[str, str], str] | None]" = (
     contextvars.ContextVar("amzn_oauth_flow_callback", default=None)
@@ -52,3 +59,38 @@ class AmazonMusicMobileAPI(_BaseAPI):
         if oauth_flow_callback is None:
             oauth_flow_callback = _oauth_callback.get()
         return _BaseAPI._exteral_login(oauth_url, application, oauth_flow_callback)
+
+    @staticmethod
+    def parse_credits_from_xray(response: dict):
+        credits_mapping: dict[str, list[str]] = {}
+        for method in response.get("methods", []):
+            if not str(method.get("interface", "")).endswith(
+                "CreateAndBindManagedContainerMethod"
+            ):
+                continue
+            for page in method.get("template", {}).get("pages", []):
+                if not str(page.get("interface", "")).endswith("ScrollableListElement"):
+                    continue
+                if str(page.get("label", {}).get("title")) != "CREDITS":
+                    continue
+                for page_element in page.get("elements", []):
+                    if not str(page_element.get("interface", "")).endswith(
+                        "VerticalContainerElement"
+                    ):
+                        continue
+                    credit_name = ""
+                    people_names: list[str] = []
+                    for element in page_element.get("elements", []):
+                        interface = str(element.get("interface", ""))
+                        if interface.endswith("LabelElement"):
+                            text = str(element.get("text", ""))
+                            spaced = " ".join(w.title() for w in text.split())
+                            credit_name = _PROPER_CREDIT_NAMES.get(spaced, text)
+                        elif interface.endswith("ClickableTextElement"):
+                            people_names.append(element["text"])
+                    if not (credit_name and people_names):
+                        continue
+                    names = credits_mapping.get(credit_name, [])
+                    names.extend(people_names)
+                    credits_mapping[credit_name] = sorted(set(names), key=names.index)
+        return credits_mapping
