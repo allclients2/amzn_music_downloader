@@ -10,12 +10,12 @@ from pathlib import Path
 
 
 def _resolve_config_dir() -> Path:
-    cwd_config = Path("config")
-    if cwd_config.is_dir():
-        return cwd_config
     override = os.environ.get("AMZDL_CONFIG_DIR")
     if override:
         return Path(override).expanduser()
+    cwd_config = Path("config")
+    if cwd_config.is_dir():
+        return cwd_config
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
         return Path(xdg).expanduser() / "amzdl"

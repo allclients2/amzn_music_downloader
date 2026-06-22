@@ -5,6 +5,7 @@ the same two-phase bar."""
 
 import asyncio
 import logging
+from pathlib import Path
 
 from amzdl.cli import cli
 from amzdl.cli.progress import Progress
@@ -51,7 +52,9 @@ def _has_lyrics(resp) -> bool:
 
 
 async def download(session, asin, output_dir, quality, wvd_path=None, plain=False,
-                   concurrency=5, metadata_concurrency=10, type_hint=None):
+                   concurrency=5, metadata_concurrency=10, type_hint=None,
+                   on_bytes=None):
+    output_dir = Path(output_dir)
     prog = Progress(asin=asin, plain=plain)
 
     try:
@@ -107,7 +110,7 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
             skipped = await process_track(
                 session, meta, representation, output_dir, True, lyrics_resp,
                 on_step=lambda desc: prog.update(desc), wvd_path=wvd_path,
-                resolve_hi_res_cover=True,
+                resolve_hi_res_cover=True, on_bytes=on_bytes,
             )
             prog.finish()
             _note_skipped([skipped])
@@ -318,6 +321,7 @@ async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_p
 
 async def download_batch(session, source_label, asins, output_dir, quality, wvd_path,
                          plain, concurrency, metadata_concurrency):
+    output_dir = Path(output_dir)
     prog = Progress(asin=source_label, plain=plain)
     failures = []
     try:

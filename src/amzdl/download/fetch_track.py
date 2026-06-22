@@ -72,14 +72,23 @@ def purge_temp_dir(output_dir: Path) -> None:
 _DOWNLOAD_CHUNK = 1024 * 1024
 
 
-def download_full_file(base_url: str, output_path):
+def download_full_file(base_url: str, output_path, on_bytes=None):
     r = requests.get(base_url, stream=True)
     if r.status_code != 200:
         _log.error("download failed. Status code: %s", r.status_code)
         return None
     r.raw.decode_content = True
+    total = int(r.headers.get("Content-Length") or 0)
+    transferred = 0
     with open(output_path, "wb") as f:
-        shutil.copyfileobj(r.raw, f, length=_DOWNLOAD_CHUNK)
+        while True:
+            chunk = r.raw.read(_DOWNLOAD_CHUNK)
+            if not chunk:
+                break
+            f.write(chunk)
+            transferred += len(chunk)
+            if on_bytes:
+                on_bytes(transferred, total)
     return output_path
 
 
@@ -108,6 +117,7 @@ async def process_track(
     on_step=None,
     wvd_path: str | None = None,
     resolve_hi_res_cover: bool = False,
+    on_bytes=None,
 ):
     def step(desc):
         _log.debug(desc)
@@ -156,7 +166,9 @@ async def process_track(
         asyncio.to_thread(
             Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path
         ),
-        asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
+        asyncio.to_thread(
+            download_full_file, rep["base_url"], encrypted_file, on_bytes
+        ),
         asyncio.to_thread(fetch_cover),
         asyncio.to_thread(_fetch_credits, session, track.asin),
     ]
@@ -209,6 +221,7 @@ async def fetch_track(
     build_folder_structure: bool = True,
     on_step=None,
     wvd_path: str | None = None,
+    on_bytes=None,
 ):
     if on_step:
         on_step("fetching manifest")
@@ -217,5 +230,5 @@ async def fetch_track(
     )
     return await process_track(
         session, track, representation, output_dir, build_folder_structure,
-        on_step=on_step, wvd_path=wvd_path,
+        on_step=on_step, wvd_path=wvd_path, on_bytes=on_bytes,
     )
