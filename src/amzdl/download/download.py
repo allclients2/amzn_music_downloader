@@ -269,7 +269,7 @@ async def _build_playlist_tracks(session, rich, albums, by_album, track_asins,
                 for asin in members:
                     if asin in rich:
                         built[asin] = _build_track(
-                            rich[asin], album_data, disc_total, cover
+                            session, rich[asin], album_data, disc_total, cover
                         )
         finally:
             if on_album:

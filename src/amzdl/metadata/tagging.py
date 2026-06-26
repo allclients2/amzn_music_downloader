@@ -54,7 +54,7 @@ def _prepare_credits(
             grouped.setdefault(key, []).extend(_split_credit_names(name))
 
     album_artist_lower = (track.album_artist or "").lower()
-    track_artist_lower = (track.artist or "").lower()
+    track_artists_lower = [a.lower() for a in (track.artists or [])]
     for key in list(grouped):
         norm = key.replace("_", " ").replace("-", " ").strip().lower()
         if norm == "music publisher":
@@ -62,7 +62,7 @@ def _prepare_credits(
             continue
         if norm in ("main artist", "primary artist"):
             names_lower = [n.lower() for n in grouped[key]]
-            if album_artist_lower in names_lower or names_lower == [track_artist_lower]:
+            if album_artist_lower in names_lower or names_lower == track_artists_lower:
                 del grouped[key]
 
     return {k: list(dict.fromkeys(v)) for k, v in grouped.items() if v}
@@ -141,7 +141,8 @@ def embed_metadata_and_cover_mp4(
             audio[f"----:com.apple.iTunes:{name}"] = [str(value).encode("utf-8")]
 
     setv("\xa9nam", track.title)
-    setv("\xa9ART", track.artist)
+    if track.artists:
+        audio["\xa9ART"] = ["\0".join(track.artists)]
     setv("\xa9alb", track.album_name)
     setv("aART", track.album_artist)
     setv("\xa9day", track.release_date)
@@ -187,7 +188,8 @@ def _set_vorbis_fields(
             audio[key] = str(value)
 
     setv("TITLE", track.title)
-    setv("ARTIST", track.artist)
+    if track.artists:
+        audio["ARTIST"] = track.artists
     setv("ALBUM", track.album_name)
     setv("ALBUMARTIST", track.album_artist)
     setv("TRACKNUMBER", track.track_number)

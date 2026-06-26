@@ -47,7 +47,7 @@ def _build_tracks_from_asins(
             cover_cache[album_asin] = _hi_res_cover(session, album_data)
         tracks.append(
             _build_track(
-                td, album_data, _disc_total(album_data), cover_cache[album_asin]
+                session, td, album_data, _disc_total(album_data), cover_cache[album_asin]
             )
         )
     return tracks

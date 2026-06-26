@@ -3,6 +3,7 @@ ASIN to a `TrackMetadata` / `AlbumMetadata` / `ArtistMetadata` /
 `PlaylistMetadata` dataclass using the signed `muse`, `textsearch`, and
 artist/playlist endpoints (never catalog search)."""
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ _BATCH_SIZE = 20
 class TrackMetadata:
     asin: str
     title: str
-    artist: str
+    artists: list[str]
     album_name: str
     album_artist: str
     album_asin: str
@@ -153,7 +154,7 @@ def resolve_track_cover(
 ) -> str | None:
     return _search_cover(
         session,
-        artist=track.album_artist or track.artist or "",
+        artist=track.album_artist or (track.artists[0] if track.artists else ""),
         title=track.album_name or "",
         asins=[track.album_asin, track.asin],
         fallback=track.cover_url,
@@ -185,7 +186,39 @@ def _album_release_date(album_data: dict) -> str | None:
     )
 
 
+_log = logging.getLogger("downloader.metadata")
+
+
+def _resolve_artists(
+    session: AmazonMusicMobileAPI, track_data: dict
+) -> list[str]:
+    """Resolve contributor ASINs to individual artist names via get_metadata.
+
+    Falls back to the single ``artist.name`` string when the track has no
+    ``contributorAsins`` or the metadata lookup fails.
+    """
+    artist_obj = track_data.get("artist") or {}
+    asins = artist_obj.get("contributorAsins") or []
+    if not asins:
+        name = artist_obj.get("name")
+        return [name] if name else []
+    try:
+        resp = session.get_metadata(tuple(asins))
+        names = [
+            entry["name"]
+            for entry in (resp.get("artistList") or [])
+            if entry.get("name")
+        ]
+        if names:
+            return names
+    except Exception:
+        _log.debug("artist resolution failed for ASINs %s; falling back", asins)
+    name = artist_obj.get("name")
+    return [name] if name else []
+
+
 def _build_track(
+    session: AmazonMusicMobileAPI,
     track_data: dict, album_data: dict, disc_total: int, cover_url: str | None
 ) -> TrackMetadata:
     product = album_data.get("productDetails") or {}
@@ -193,7 +226,7 @@ def _build_track(
     return TrackMetadata(
         asin=track_data.get("asin"),
         title=_strip_explicitness_label(track_data.get("title")),
-        artist=(track_data.get("artist") or {}).get("name"),
+        artists=_resolve_artists(session, track_data),
         album_name=_strip_explicitness_label(album_data.get("title")),
         album_artist=album_data.get("primaryArtistName")
         or (album_data.get("artist") or {}).get("name"),
@@ -323,7 +356,7 @@ def fetch_metadata(
             else _hi_res_cover(session, album_data)
         )
         return "track", _build_track(
-            track_data, album_data, _disc_total(album_data), cover_url
+            session, track_data, album_data, _disc_total(album_data), cover_url
         )
 
     album_data = album_match or (albums_list[0] if albums_list else None)
@@ -351,7 +384,7 @@ def fetch_metadata(
     for lt in light_tracks:
         asin = lt.get("asin")
         td = rich.get(asin, lt)
-        tracks.append(_build_track(td, album_data, disc_total, cover_url))
+        tracks.append(_build_track(session, td, album_data, disc_total, cover_url))
 
     product = album_data.get("productDetails") or {}
     album = AlbumMetadata(
@@ -369,3 +402,4 @@ def fetch_metadata(
         tracks=tracks,
     )
     return "album", album
+

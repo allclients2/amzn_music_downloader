@@ -58,7 +58,7 @@ def _make_track(asin, title, track_number=1, total_tracks=1, disc=1, total_discs
     return TrackMetadata(
         asin=asin,
         title=title,
-        artist="Fake Artist",
+        artists=["Fake Artist"],
         album_name="Fake Album",
         album_artist="Fake Artist",
         album_asin=_FAKE_ALBUM_ASIN,
