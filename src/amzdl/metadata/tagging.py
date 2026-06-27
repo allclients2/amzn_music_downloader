@@ -2,11 +2,18 @@
 container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus,
 MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`. The ARTIST tag is written
 multi-valued (each credited artist its own value) from the precomputed `artists`
-list resolved by `fetch_track`: Vorbis stores it as native multi-value, and MP4
-`\xa9ART` as one atom holding multiple values (the Picard/Mp3tag convention — a
-single atom, not duplicate atoms or a delimiter-joined string). With no list
-supplied it derives one from the credits xray's performer set, falling back to
-the API's joined display string. Mirrors the tag set
+list `fetch_track` resolves: the credits xray's performer set first, then —
+only when the `resolve_artists_from_asins` config flag is on (default) and the
+resolved names fully account for the display string (`artists_covering_display`,
+which refuses any partial/incomplete contributor-ASIN resolution) — the names
+resolved from the track's contributor ASINs, else the API's joined display
+string as a single value (never split — splitting the joined string would
+fragment artists whose own name contains a separator, e.g. `Tyler, The Creator`).
+With no list supplied it derives one from the credits performer set, falling back
+to the joined string. Vorbis stores the set as native multi-value, MP4 `\xa9ART`
+as one atom holding
+multiple values (the Picard/Mp3tag convention — a single atom, not duplicate
+atoms or a delimiter-joined string). Mirrors the tag set
 OrpheusDL's Amazon Music module writes: core fields, an Explicit/Clean RATING,
 the music.amazon URL (WWW), MERCHANT, reference loudness, a
 LABEL/PUBLISHER/ORGANIZATION fan-out, and per-role credits parsed from the track
@@ -27,8 +34,10 @@ _UA = (
     "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 )
 _FRONT_COVER = 3
-_CREDIT_NAME_SPLIT = re.compile(r" & |, | - | / | feat\. ")
 _ARTIST_CREDIT_ROLES = ("performer", "main artist", "primary artist")
+_DISPLAY_CONNECTORS = re.compile(
+    r"feat\.?|ft\.?|featuring|with|&|,|/|\band\b", re.IGNORECASE
+)
 
 
 def _as_int(value) -> int:
@@ -36,10 +45,6 @@ def _as_int(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-def _split_credit_names(name: str) -> list[str]:
-    return [part for part in _CREDIT_NAME_SPLIT.split(str(name)) if part]
 
 
 def _credit_key(name: str) -> str:
@@ -67,6 +72,24 @@ def artists_from_credits(credits: dict | None) -> list[str]:
     return []
 
 
+def artists_covering_display(display: str | None, resolved: list[str]) -> list[str]:
+    if not display or not resolved:
+        return []
+    names = list(dict.fromkeys(n.strip() for n in resolved if n and n.strip()))
+    if not names:
+        return []
+    remainder = display
+    for name in sorted(names, key=len, reverse=True):
+        idx = remainder.lower().find(name.lower())
+        if idx == -1:
+            return []
+        remainder = remainder[:idx] + " " + remainder[idx + len(name):]
+    if _DISPLAY_CONNECTORS.sub(" ", remainder).strip():
+        return []
+    low = display.lower()
+    return sorted(names, key=lambda n: low.find(n.lower()))
+
+
 def _prepare_credits(
     credits: dict | None, track: TrackMetadata, track_artists: list[str]
 ) -> dict[str, list[str]]:
@@ -76,7 +99,9 @@ def _prepare_credits(
         if not key:
             continue
         for name in names or []:
-            grouped.setdefault(key, []).extend(_split_credit_names(name))
+            cleaned = str(name).strip()
+            if cleaned:
+                grouped.setdefault(key, []).append(cleaned)
 
     album_artist_lower = (track.album_artist or "").lower()
     track_artists_lower = [a.lower() for a in track_artists]

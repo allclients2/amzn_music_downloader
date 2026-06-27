@@ -53,7 +53,7 @@ def _has_lyrics(resp) -> bool:
 
 async def download(session, asin, output_dir, quality, wvd_path=None, plain=False,
                    concurrency=5, metadata_concurrency=10, type_hint=None,
-                   on_bytes=None):
+                   on_bytes=None, resolve_artists_from_asins=True):
     output_dir = Path(output_dir)
     prog = Progress(asin=asin, plain=plain)
 
@@ -80,7 +80,7 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
             prog.abort()
             await _download_artist(
                 session, asin, meta, output_dir, quality, wvd_path, plain,
-                concurrency, metadata_concurrency
+                concurrency, metadata_concurrency, resolve_artists_from_asins
             )
             return
 
@@ -88,7 +88,7 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
             prog.abort()
             await _download_playlist(
                 session, asin, meta, output_dir, quality, wvd_path, plain,
-                concurrency, metadata_concurrency
+                concurrency, metadata_concurrency, resolve_artists_from_asins
             )
             return
 
@@ -111,6 +111,7 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
                 session, meta, representation, output_dir, True, lyrics_resp,
                 on_step=lambda desc: prog.update(desc), wvd_path=wvd_path,
                 resolve_hi_res_cover=True, on_bytes=on_bytes,
+                resolve_artists_from_asins=resolve_artists_from_asins,
             )
             prog.finish()
             _note_skipped([skipped])
@@ -118,7 +119,8 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
             prog.set_name(meta.album_name)
             prog.begin_custom(len(meta.tracks))
             results = await _run_tracks(
-                prog, session, meta.tracks, output_dir, quality, wvd_path, concurrency
+                prog, session, meta.tracks, output_dir, quality, wvd_path, concurrency,
+                resolve_artists_from_asins,
             )
             prog.finish()
             _note_skipped(results)
@@ -130,7 +132,8 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
 
 
 async def _run_tracks(
-    prog, session, tracks, output_dir, quality, wvd_path, concurrency
+    prog, session, tracks, output_dir, quality, wvd_path, concurrency,
+    resolve_artists_from_asins,
 ):
     sem = asyncio.Semaphore(concurrency)
 
@@ -142,6 +145,7 @@ async def _run_tracks(
                     session, track, output_dir, quality,
                     on_step=lambda desc: prog.track_step(slot, desc),
                     wvd_path=wvd_path,
+                    resolve_artists_from_asins=resolve_artists_from_asins,
                 )
             finally:
                 prog.track_done(slot)
@@ -186,7 +190,8 @@ async def _resolve_to_tracks(session, asin, metadata_concurrency):
 
 
 async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
-                           plain, concurrency, metadata_concurrency):
+                           plain, concurrency, metadata_concurrency,
+                           resolve_artists_from_asins):
     albums = artist.album_asins
     if not albums:
         cli.note(f"No albums found for artist '{artist.name}'.")
@@ -206,7 +211,8 @@ async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
 
         prog.begin_custom(len(tracks), rate_label="tracks/s")
         results = await _run_tracks(
-            prog, session, tracks, output_dir, quality, wvd_path, concurrency
+            prog, session, tracks, output_dir, quality, wvd_path, concurrency,
+            resolve_artists_from_asins,
         )
         prog.finish()
         _note_skipped(results)
@@ -283,7 +289,8 @@ async def _build_playlist_tracks(session, rich, albums, by_album, track_asins,
 
 
 async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_path,
-                             plain, concurrency, metadata_concurrency):
+                             plain, concurrency, metadata_concurrency,
+                             resolve_artists_from_asins):
     track_asins = playlist.track_asins
     if not track_asins:
         cli.note(f"No tracks found in playlist '{playlist.name}'.")
@@ -308,7 +315,8 @@ async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_p
 
         prog.begin_custom(len(tracks), rate_label="tracks/s")
         results = await _run_tracks(
-            prog, session, tracks, output_dir, quality, wvd_path, concurrency
+            prog, session, tracks, output_dir, quality, wvd_path, concurrency,
+            resolve_artists_from_asins,
         )
         prog.finish()
         _note_skipped(results)
@@ -320,7 +328,8 @@ async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_p
 
 
 async def download_batch(session, source_label, asins, output_dir, quality, wvd_path,
-                         plain, concurrency, metadata_concurrency):
+                         plain, concurrency, metadata_concurrency,
+                         resolve_artists_from_asins):
     output_dir = Path(output_dir)
     prog = Progress(asin=source_label, plain=plain)
     failures = []
@@ -351,7 +360,8 @@ async def download_batch(session, source_label, asins, output_dir, quality, wvd_
 
         prog.begin_custom(len(tracks), rate_label="tracks/s")
         results = await _run_tracks(
-            prog, session, tracks, output_dir, quality, wvd_path, concurrency
+            prog, session, tracks, output_dir, quality, wvd_path, concurrency,
+            resolve_artists_from_asins,
         )
         prog.finish()
         _note_skipped(results)

@@ -19,7 +19,12 @@ from amzdl.metadata.metadata import (
     resolve_artist_names,
     resolve_track_cover,
 )
-from amzdl.metadata.tagging import artists_from_credits, download_artwork, tag_track
+from amzdl.metadata.tagging import (
+    artists_covering_display,
+    artists_from_credits,
+    download_artwork,
+    tag_track,
+)
 from amzdl.remux.decrypt import decrypt_mp4
 from amzdl.remux.remux import remux_ac4, remux_flac, remux_mp4, remux_opus
 from amzdl.utils import build_output_filename, safe_filename
@@ -27,6 +32,20 @@ from amzdl.utils import build_output_filename, safe_filename
 _log = logging.getLogger("downloader.track")
 
 _TEMP_SUBDIR = ".downloader"
+
+
+async def _resolve_artists(
+    session, track: TrackMetadata, credits: dict, use_asin_fallback: bool
+) -> list[str]:
+    artists = artists_from_credits(credits)
+    if not artists and use_asin_fallback and track.contributor_asins:
+        resolved = await asyncio.to_thread(
+            resolve_artist_names, session, track.contributor_asins
+        )
+        artists = artists_covering_display(track.artist, resolved)
+    if not artists and track.artist:
+        artists = [track.artist]
+    return artists
 
 def _output_spec(codec):
     c = str(codec or "").lower()
@@ -122,6 +141,7 @@ async def process_track(
     wvd_path: str | None = None,
     resolve_hi_res_cover: bool = False,
     on_bytes=None,
+    resolve_artists_from_asins: bool = True,
 ):
     def step(desc):
         _log.debug(desc)
@@ -201,13 +221,9 @@ async def process_track(
 
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
-    artists = artists_from_credits(credits)
-    if not artists and track.contributor_asins:
-        artists = await asyncio.to_thread(
-            resolve_artist_names, session, track.contributor_asins
-        )
-    if not artists and track.artist:
-        artists = [track.artist]
+    artists = await _resolve_artists(
+        session, track, credits, resolve_artists_from_asins
+    )
     await asyncio.to_thread(
         tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode,
         artwork_path,
@@ -233,6 +249,7 @@ async def fetch_track(
     on_step=None,
     wvd_path: str | None = None,
     on_bytes=None,
+    resolve_artists_from_asins: bool = True,
 ):
     if on_step:
         on_step("fetching manifest")
@@ -242,4 +259,5 @@ async def fetch_track(
     return await process_track(
         session, track, representation, output_dir, build_folder_structure,
         on_step=on_step, wvd_path=wvd_path, on_bytes=on_bytes,
+        resolve_artists_from_asins=resolve_artists_from_asins,
     )

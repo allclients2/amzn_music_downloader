@@ -188,7 +188,8 @@ def _fake_representations(session, asin, quality=None):
 async def _fake_process_track(session, track, representation, output_dir,
                               build_folder_structure=True, lyrics_resp=None,
                               on_step=None, wvd_path="device.wvd",
-                              resolve_hi_res_cover=False):
+                              resolve_hi_res_cover=False, on_bytes=None,
+                              resolve_artists_from_asins=True):
     for desc, delay in _FAKE_STEPS:
         if on_step:
             on_step(desc)
@@ -197,7 +198,8 @@ async def _fake_process_track(session, track, representation, output_dir,
 
 async def _fake_fetch_track(session, track, output_dir, quality,
                             build_folder_structure=True, on_step=None,
-                            wvd_path="device.wvd"):
+                            wvd_path="device.wvd", on_bytes=None,
+                            resolve_artists_from_asins=True):
     for desc, delay in _FAKE_ALBUM_STEPS:
         if on_step:
             on_step(desc)

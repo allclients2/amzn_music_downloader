@@ -113,6 +113,7 @@ async def run_search(args):
     metadata_concurrency = (
         args.metadata_concurrency or settings["default_metadata_concurrency"]
     )
+    resolve_artists_from_asins = settings["resolve_artists_from_asins"]
     limit = args.search_limit or settings["default_search_limit"]
 
     session = auth.get_session(account=args.account)
@@ -142,7 +143,8 @@ async def run_search(args):
     type_hint = search_type if settings["use_link_hints"] else None
     await download(session, results[choice].asin, output_dir, quality, wvd_path,
                    plain=args.verbose, concurrency=concurrency,
-                   metadata_concurrency=metadata_concurrency, type_hint=type_hint)
+                   metadata_concurrency=metadata_concurrency, type_hint=type_hint,
+                   resolve_artists_from_asins=resolve_artists_from_asins)
 
 
 async def run_download(args):
@@ -156,6 +158,7 @@ async def run_download(args):
     metadata_concurrency = (
         args.metadata_concurrency or settings["default_metadata_concurrency"]
     )
+    resolve_artists_from_asins = settings["resolve_artists_from_asins"]
 
     try:
         asins = links.resolve_inputs(args.content_asin)
@@ -182,13 +185,15 @@ async def run_download(args):
     if source is not None:
         await download_batch(session, source, asins, output_dir, quality, wvd_path,
                              plain=args.verbose, concurrency=concurrency,
-                             metadata_concurrency=metadata_concurrency)
+                             metadata_concurrency=metadata_concurrency,
+                             resolve_artists_from_asins=resolve_artists_from_asins)
     else:
         type_hint = hint.type
         await download(session, asins[0], output_dir, quality, wvd_path,
                        plain=args.verbose, concurrency=concurrency,
                        metadata_concurrency=metadata_concurrency,
-                       type_hint=type_hint)
+                       type_hint=type_hint,
+                       resolve_artists_from_asins=resolve_artists_from_asins)
 
 
 def _account_options():

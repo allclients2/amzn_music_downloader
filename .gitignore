@@ -26,3 +26,4 @@ flows.csv
 flows.mitm
 .ruff_cache
 .vscode
+scripts

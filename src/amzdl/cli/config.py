@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
         "default_metadata_concurrency": 10,
         "default_search_limit": 8,
         "use_link_hints": True,
+        "resolve_artists_from_asins": True,
     },
     "accounts": {},
 }
