@@ -4,7 +4,7 @@ requires-python = ">=3.10"
 
 [[package]]
 name = "amzdl"
-version = "2.10.4"
+version = "2.10.6"
 source = { editable = "." }
 dependencies = [
     { name = "audible" },
@@ -32,7 +32,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "audible", specifier = "==0.8.2" },
-    { name = "beautifulsoup4", specifier = "==4.12.2" },
+    { name = "beautifulsoup4", specifier = ">=4.12.2" },
     { name = "brotli" },
     { name = "httpx", specifier = "==0.23.3" },
     { name = "mutagen" },
