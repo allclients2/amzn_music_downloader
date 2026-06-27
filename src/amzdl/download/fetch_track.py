@@ -14,8 +14,12 @@ import requests
 from amzdl.download.keys import Keys
 from amzdl.download.mpd_info import _AUDIO_EXTENSIONS, find_representation
 from amzdl.metadata.lyrics import Lyrics
-from amzdl.metadata.metadata import TrackMetadata, resolve_track_cover
-from amzdl.metadata.tagging import download_artwork, tag_track
+from amzdl.metadata.metadata import (
+    TrackMetadata,
+    resolve_artist_names,
+    resolve_track_cover,
+)
+from amzdl.metadata.tagging import artists_from_credits, download_artwork, tag_track
 from amzdl.remux.decrypt import decrypt_mp4
 from amzdl.remux.remux import remux_ac4, remux_flac, remux_mp4, remux_opus
 from amzdl.utils import build_output_filename, safe_filename
@@ -197,10 +201,17 @@ async def process_track(
 
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
+    artists = artists_from_credits(credits)
+    if not artists and track.contributor_asins:
+        artists = await asyncio.to_thread(
+            resolve_artist_names, session, track.contributor_asins
+        )
+    if not artists and track.artist:
+        artists = [track.artist]
     await asyncio.to_thread(
         tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode,
         artwork_path,
-        _track_url(session, track), credits, rep.get("reference_loudness"),
+        _track_url(session, track), credits, rep.get("reference_loudness"), artists,
     )
 
     track_output_dir.mkdir(parents=True, exist_ok=True)

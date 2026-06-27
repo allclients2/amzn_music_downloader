@@ -1,9 +1,12 @@
 """Tag a downloaded track and embed its cover art. `tag_track` dispatches on the
 container chosen by `fetch_track._output_spec` — Vorbis comments for FLAC/Opus,
 MP4 atoms for spatial `.mp4`, or skip for raw `.ac4`. The ARTIST tag is written
-multi-valued from the credits xray's performer set (each credited artist as its
-own value, falling back to the API's joined display string when no credits are
-available). Mirrors the tag set
+multi-valued (each credited artist its own value) from the precomputed `artists`
+list resolved by `fetch_track`: Vorbis stores it as native multi-value, and MP4
+`\xa9ART` as one atom holding multiple values (the Picard/Mp3tag convention — a
+single atom, not duplicate atoms or a delimiter-joined string). With no list
+supplied it derives one from the credits xray's performer set, falling back to
+the API's joined display string. Mirrors the tag set
 OrpheusDL's Amazon Music module writes: core fields, an Explicit/Clean RATING,
 the music.amazon URL (WWW), MERCHANT, reference loudness, a
 LABEL/PUBLISHER/ORGANIZATION fan-out, and per-role credits parsed from the track
@@ -50,7 +53,7 @@ def _role_norm(name: str) -> str:
     return _credit_key(name).replace("_", " ").replace("-", " ").strip().lower()
 
 
-def _track_artists(credits: dict | None, track: TrackMetadata) -> list[str]:
+def artists_from_credits(credits: dict | None) -> list[str]:
     by_role: dict[str, list[str]] = {}
     for credit_type, names in (credits or {}).items():
         role = _role_norm(credit_type)
@@ -61,7 +64,7 @@ def _track_artists(credits: dict | None, track: TrackMetadata) -> list[str]:
     for role in _ARTIST_CREDIT_ROLES:
         if by_role.get(role):
             return by_role[role]
-    return [track.artist] if track.artist else []
+    return []
 
 
 def _prepare_credits(
@@ -126,10 +129,13 @@ def download_artwork(url: str, directory: str):
 
 def tag_track(media_path: str, track: TrackMetadata, lyrics, temp_dir: str,
               tag_mode: str = "flac", artwork_path=None,
-              track_url=None, credits=None, reference_loudness=None):
+              track_url=None, credits=None, reference_loudness=None, artists=None):
     if tag_mode is None:
         return
-    artists = _track_artists(credits, track)
+    if artists is None:
+        artists = artists_from_credits(credits) or (
+            [track.artist] if track.artist else []
+        )
     prepared_credits = _prepare_credits(credits, track, artists)
     extra = _extra_tags(track, track_url, reference_loudness)
     if tag_mode == "mp4":

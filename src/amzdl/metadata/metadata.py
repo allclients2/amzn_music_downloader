@@ -37,6 +37,7 @@ class TrackMetadata:
     review_average: float | None = None
     review_count: int | None = None
     cover_url: str | None = None
+    contributor_asins: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -216,6 +217,9 @@ def _build_track(
         review_average=review_average,
         review_count=review_count,
         cover_url=cover_url,
+        contributor_asins=(
+            (track_data.get("artist") or {}).get("contributorAsins") or []
+        ),
     )
 
 
@@ -230,6 +234,23 @@ def _fetch_album_data(session: AmazonMusicMobileAPI, album_asin: str) -> dict:
     if not albums:
         raise ValueError(f"album {album_asin} not found in muse response")
     return albums[0]
+
+
+def resolve_artist_names(
+    session: AmazonMusicMobileAPI, asins: list[str]
+) -> list[str]:
+    if not asins:
+        return []
+    try:
+        resp = session.get_metadata(tuple(asins))
+    except Exception:
+        return []
+    by_asin = {
+        a.get("asin"): a.get("name")
+        for a in (resp.get("artistList") or [])
+        if a.get("asin") and a.get("name")
+    }
+    return list(dict.fromkeys(by_asin[a] for a in asins if a in by_asin))
 
 
 def _fetch_tracks(session: AmazonMusicMobileAPI, asins: list[str]) -> dict:
