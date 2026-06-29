@@ -185,6 +185,8 @@ async def process_track(
         )
         return download_artwork(url, str(temp_dir))
 
+    await asyncio.to_thread(session.ensure_fresh_token)
+
     step("downloading track")
     coros = [
         asyncio.to_thread(

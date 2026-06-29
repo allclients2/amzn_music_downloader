@@ -11,7 +11,7 @@ from amazonmusic.models import (
     AmazonMusicMobileAPICredentials,
     AmazonRegion,
 )
-from amzdl.api.amzn_api import AmazonMusicMobileAPI
+from amzdl.api.amzn_api import AmazonMusicMobileAPI, token_needs_refresh
 from amzdl.cli import cli, config, prompts
 
 
@@ -262,7 +262,7 @@ def get_session(
 
 def _ready_session(credentials) -> AmazonMusicMobileAPI:
     session = AmazonMusicMobileAPI(credentials=credentials)
-    if session.credentials.access_token_expired:
+    if token_needs_refresh(session.credentials):
         cli.note("Access token expired; refreshing...")
         session.refresh_access_token(force=True)
         _save_account(session.credentials)

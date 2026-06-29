@@ -1,15 +1,37 @@
 """Local patches over the upstream Amazon Music API submodule. Subclasses the
-read-only `AmazonMusicMobileAPI` to fix three touch points — forwarding the
-OAuth callback through the JP Prime Video recursion, silencing the upstream
-login banner that desyncs the UI redraw, and parsing track-credit role names
-without the upstream `.title()` collapse so their camelCase word boundaries
-survive for downstream UPPERCASE_SNAKE_CASE tagging."""
+read-only `AmazonMusicMobileAPI` to fix three login/credit touch points —
+forwarding the OAuth callback through the JP Prime Video recursion, silencing the
+upstream login banner that desyncs the UI redraw, and parsing track-credit role
+names without the upstream `.title()` collapse so their camelCase word boundaries
+survive for downstream UPPERCASE_SNAKE_CASE tagging — and adds a token-freshness
+guard. The upstream mints `credentials.expires` from `datetime.utcnow()` but
+compares it against the local-clock `datetime.now()`, inflating a token's apparent
+lifetime by the machine's UTC offset, so a token can read as valid hours past its
+real expiry; the X-Ray credits endpoint is the only one that strictly validates
+the bearer token (every other call authenticates with the RSA `x-adp-token`
+signature and tolerates a stale token) and answers with its error screen. So
+`token_needs_refresh` compares expiry in UTC with a margin, and the lock-guarded
+`ensure_fresh_token` — called once per track by the download pipeline before the
+concurrent X-Ray fetch — refreshes when needed without racing the other
+concurrent tracks, keeping long batch/artist runs that outlive the hour fresh."""
 
 import contextvars
+import datetime
+import threading
 import typing
 
 import amazonmusic.azapi as _az
 from amazonmusic.azapi import AmazonMusicMobileAPI as _BaseAPI
+
+_TOKEN_REFRESH_MARGIN = datetime.timedelta(minutes=10)
+
+
+def token_needs_refresh(credentials) -> bool:
+    expires = getattr(credentials, "expires", None)
+    if expires is None:
+        return True
+    now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    return expires <= now_utc + _TOKEN_REFRESH_MARGIN
 
 _PROPER_CREDIT_NAMES = {
     "Performed By": "Performer",
@@ -41,6 +63,17 @@ def _make_filtered_print(real_print):
 
 
 class AmazonMusicMobileAPI(_BaseAPI):
+
+    def __init__(self, *args, **kwargs):
+        self._token_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
+    def ensure_fresh_token(self) -> None:
+        if not token_needs_refresh(self.credentials):
+            return
+        with self._token_lock:
+            if token_needs_refresh(self.credentials):
+                self.refresh_access_token(force=True)
 
     @classmethod
     def login_via_mobile(cls, *args, oauth_flow_callback=None, **kwargs):
