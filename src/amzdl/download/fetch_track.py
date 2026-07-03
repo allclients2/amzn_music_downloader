@@ -135,13 +135,12 @@ async def process_track(
     track: TrackMetadata,
     representation,
     output_dir: Path,
+    cfg,
     build_folder_structure: bool = True,
     lyrics_resp=None,
     on_step=None,
-    wvd_path: str | None = None,
     resolve_hi_res_cover: bool = False,
     on_bytes=None,
-    resolve_artists_from_asins: bool = True,
 ):
     def step(desc):
         _log.debug(desc)
@@ -190,7 +189,7 @@ async def process_track(
     step("downloading track")
     coros = [
         asyncio.to_thread(
-            Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path
+            Keys.getContentKeys, session, track.asin, rep["pssh"], cfg.wvd_path
         ),
         asyncio.to_thread(
             download_full_file, rep["base_url"], encrypted_file, on_bytes
@@ -224,7 +223,7 @@ async def process_track(
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
     artists = await _resolve_artists(
-        session, track, credits, resolve_artists_from_asins
+        session, track, credits, cfg.resolve_artists_from_asins
     )
     await asyncio.to_thread(
         tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode,
@@ -246,20 +245,16 @@ async def fetch_track(
     session,
     track: TrackMetadata,
     output_dir: Path,
-    quality,
+    cfg,
     build_folder_structure: bool = True,
     on_step=None,
-    wvd_path: str | None = None,
-    on_bytes=None,
-    resolve_artists_from_asins: bool = True,
 ):
     if on_step:
         on_step("fetching manifest")
     representation = await asyncio.to_thread(
-        find_representation, session, track.asin, quality
+        find_representation, session, track.asin, cfg.quality
     )
     return await process_track(
-        session, track, representation, output_dir, build_folder_structure,
-        on_step=on_step, wvd_path=wvd_path, on_bytes=on_bytes,
-        resolve_artists_from_asins=resolve_artists_from_asins,
+        session, track, representation, output_dir, cfg, build_folder_structure,
+        on_step=on_step,
     )

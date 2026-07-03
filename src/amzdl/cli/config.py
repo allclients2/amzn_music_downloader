@@ -6,6 +6,7 @@ layouts."""
 import copy
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -91,6 +92,16 @@ def resolve_wvd_path(override: str | None = None) -> Path | None:
     if configured:
         return Path(configured).expanduser()
     return None
+
+
+@dataclass(frozen=True)
+class DownloadConfig:
+    quality: str
+    wvd_path: str | None = None
+    plain: bool = False
+    concurrency: int = 5
+    metadata_concurrency: int = 10
+    resolve_artists_from_asins: bool = True
 
 
 def load_accounts() -> dict:

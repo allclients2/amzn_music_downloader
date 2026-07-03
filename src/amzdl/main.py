@@ -6,6 +6,7 @@ from pathlib import Path
 from amzdl._version import VERSION
 from amzdl.api import auth
 from amzdl.cli import cli, config, prompts
+from amzdl.cli.config import DownloadConfig
 from amzdl.download import links
 from amzdl.download.download import download, download_batch
 from amzdl.metadata.search import SEARCH_TYPES, normalize_type, search_catalog
@@ -102,18 +103,25 @@ def parse_search_args(argv):
     return parser.parse_args(argv)
 
 
+def _download_config(settings, args) -> DownloadConfig:
+    return DownloadConfig(
+        quality=args.quality or settings["default_quality"],
+        wvd_path=config.resolve_wvd_path(args.wvd_path),
+        plain=args.verbose,
+        concurrency=settings["default_concurrency"],
+        metadata_concurrency=(
+            args.metadata_concurrency or settings["default_metadata_concurrency"]
+        ),
+        resolve_artists_from_asins=settings["resolve_artists_from_asins"],
+    )
+
+
 async def run_search(args):
     cli.setup_logging(args.verbose)
 
     settings = config.get_settings()
-    quality = args.quality or settings["default_quality"]
-    wvd_path = config.resolve_wvd_path(args.wvd_path)
+    cfg = _download_config(settings, args)
     output_dir = Path(args.output or settings["default_output"]).expanduser()
-    concurrency = settings["default_concurrency"]
-    metadata_concurrency = (
-        args.metadata_concurrency or settings["default_metadata_concurrency"]
-    )
-    resolve_artists_from_asins = settings["resolve_artists_from_asins"]
     limit = args.search_limit or settings["default_search_limit"]
 
     session = auth.get_session(account=args.account)
@@ -136,29 +144,21 @@ async def run_search(args):
     if choice is None:
         return
 
-    if wvd_path is not None and not Path(wvd_path).exists():
-        cli.print_error(f"Widevine device not found: {wvd_path}")
+    if cfg.wvd_path is not None and not Path(cfg.wvd_path).exists():
+        cli.print_error(f"Widevine device not found: {cfg.wvd_path}")
         sys.exit(1)
 
     type_hint = search_type if settings["use_link_hints"] else None
-    await download(session, results[choice].asin, output_dir, quality, wvd_path,
-                   plain=args.verbose, concurrency=concurrency,
-                   metadata_concurrency=metadata_concurrency, type_hint=type_hint,
-                   resolve_artists_from_asins=resolve_artists_from_asins)
+    await download(session, results[choice].asin, output_dir, cfg,
+                   type_hint=type_hint)
 
 
 async def run_download(args):
     cli.setup_logging(args.verbose)
 
     settings = config.get_settings()
-    quality = args.quality or settings["default_quality"]
-    wvd_path = config.resolve_wvd_path(args.wvd_path)
+    cfg = _download_config(settings, args)
     output_dir = Path(args.output or settings["default_output"]).expanduser()
-    concurrency = settings["default_concurrency"]
-    metadata_concurrency = (
-        args.metadata_concurrency or settings["default_metadata_concurrency"]
-    )
-    resolve_artists_from_asins = settings["resolve_artists_from_asins"]
 
     try:
         asins = links.resolve_inputs(args.content_asin)
@@ -169,8 +169,8 @@ async def run_download(args):
         cli.print_error("No ASINs or links found in input")
         sys.exit(1)
 
-    if wvd_path is not None and not Path(wvd_path).exists():
-        cli.print_error(f"Widevine device not found: {wvd_path}")
+    if cfg.wvd_path is not None and not Path(cfg.wvd_path).exists():
+        cli.print_error(f"Widevine device not found: {cfg.wvd_path}")
         sys.exit(1)
 
     hint = (
@@ -183,17 +183,9 @@ async def run_download(args):
 
     source = links.input_file_label(args.content_asin)
     if source is not None:
-        await download_batch(session, source, asins, output_dir, quality, wvd_path,
-                             plain=args.verbose, concurrency=concurrency,
-                             metadata_concurrency=metadata_concurrency,
-                             resolve_artists_from_asins=resolve_artists_from_asins)
+        await download_batch(session, source, asins, output_dir, cfg)
     else:
-        type_hint = hint.type
-        await download(session, asins[0], output_dir, quality, wvd_path,
-                       plain=args.verbose, concurrency=concurrency,
-                       metadata_concurrency=metadata_concurrency,
-                       type_hint=type_hint,
-                       resolve_artists_from_asins=resolve_artists_from_asins)
+        await download(session, asins[0], output_dir, cfg, type_hint=hint.type)
 
 
 def _account_options():
