@@ -27,6 +27,7 @@ class TrackMetadata:
     total_discs: int
     duration_seconds: int
     is_explicit: bool
+    abs_track_number: int | None = None
     isrc: str | None = None
     composers: str | None = None
     release_date: str | None = None
@@ -191,6 +192,8 @@ def _build_track(
 ) -> TrackMetadata:
     product = album_data.get("productDetails") or {}
     review_average, review_count = _reviews(album_data)
+    disc = int(track_data.get("discNum") or 1)
+    track_number = int(track_data.get("trackNum") or 1)
     return TrackMetadata(
         asin=track_data.get("asin"),
         title=_strip_explicitness_label(track_data.get("title")),
@@ -199,8 +202,9 @@ def _build_track(
         album_artist=album_data.get("primaryArtistName")
         or (album_data.get("artist") or {}).get("name"),
         album_asin=album_data.get("asin"),
-        disc=int(track_data.get("discNum") or 1),
-        track_number=int(track_data.get("trackNum") or 1),
+        disc=disc,
+        track_number=track_number,
+        abs_track_number=_abs_track_number(album_data, disc, track_number),
         total_tracks=int(album_data.get("trackCount") or 1),
         total_discs=disc_total,
         duration_seconds=int(track_data.get("duration") or 0),
@@ -226,6 +230,12 @@ def _build_track(
 def _disc_total(album_data: dict) -> int:
     discs = [int(t.get("discNum") or 1) for t in album_data.get("tracks", []) if t]
     return max(discs) if discs else 1
+
+
+def _abs_track_number(album_data: dict, disc: int, track_number: int) -> int:
+    tracks = album_data.get("tracks") or []
+    prior = sum(1 for t in tracks if t and int(t.get("discNum") or 1) < disc)
+    return prior + track_number
 
 
 def _fetch_album_data(session: AmazonMusicMobileAPI, album_asin: str) -> dict:

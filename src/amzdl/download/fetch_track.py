@@ -27,7 +27,12 @@ from amzdl.metadata.tagging import (
 )
 from amzdl.remux.decrypt import decrypt_mp4
 from amzdl.remux.remux import remux_ac4, remux_flac, remux_mp4, remux_opus
-from amzdl.utils import build_output_filename, safe_filename
+from amzdl.utils import (
+    DEFAULT_FILE_TEMPLATE,
+    DEFAULT_FOLDER_TEMPLATE,
+    DEFAULT_MULTI_DISC_FILE_TEMPLATE,
+    render_track_relpath,
+)
 
 _log = logging.getLogger("downloader.track")
 
@@ -151,17 +156,25 @@ async def process_track(
         _log.warning("no playable representation for %s; skipping.", track.title)
         return
 
+    naming = cfg.naming
     rep = representation.mpd_representation
     extension, tag_mode = _output_spec(rep.get("codec"))
 
-    if build_folder_structure:
-        safe_album_artist_name = safe_filename(track.album_artist, False)
-        safe_album_name = safe_filename(track.album_name, False)
-        track_output_dir = output_dir / safe_album_artist_name / safe_album_name
+    folder_template = naming.folder_template if naming else DEFAULT_FOLDER_TEMPLATE
+    if (track.total_discs or 0) > 1:
+        file_template = (
+            naming.multi_disc_file_template if naming
+            else DEFAULT_MULTI_DISC_FILE_TEMPLATE
+        )
     else:
-        track_output_dir = output_dir
+        file_template = naming.file_template if naming else DEFAULT_FILE_TEMPLATE
 
-    output_filename = build_output_filename(track.disc, track.track_number, track.title)
+    relpath = render_track_relpath(
+        track, folder_template if build_folder_structure else "", file_template
+    )
+    rel_dir = relpath.parent
+    output_filename = relpath.name
+    track_output_dir = output_dir / rel_dir
     output_file = track_output_dir / (output_filename + extension)
 
     existing = _existing_download(track_output_dir, output_filename)

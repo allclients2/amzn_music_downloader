@@ -9,6 +9,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from amzdl.utils import (
+    DEFAULT_FILE_TEMPLATE,
+    DEFAULT_FOLDER_TEMPLATE,
+    DEFAULT_MULTI_DISC_FILE_TEMPLATE,
+)
+
 
 def _resolve_config_dir() -> Path:
     override = os.environ.get("AMZDL_CONFIG_DIR")
@@ -31,6 +37,9 @@ DEFAULT_CONFIG = {
     "config": {
         "default_quality": "HD",
         "default_output": "~/Music/amzdl",
+        "folder_template": DEFAULT_FOLDER_TEMPLATE,
+        "file_template": DEFAULT_FILE_TEMPLATE,
+        "multi_disc_file_template": DEFAULT_MULTI_DISC_FILE_TEMPLATE,
         "default_wvd_path": "",
         "default_account": "",
         "default_concurrency": 5,
@@ -94,6 +103,13 @@ def resolve_wvd_path(override: str | None = None) -> Path | None:
     return None
 
 
+@dataclass
+class NamingScheme:
+    folder_template: str = DEFAULT_FOLDER_TEMPLATE
+    file_template: str = DEFAULT_FILE_TEMPLATE
+    multi_disc_file_template: str = DEFAULT_MULTI_DISC_FILE_TEMPLATE
+
+
 @dataclass(frozen=True)
 class DownloadConfig:
     quality: str
@@ -102,6 +118,18 @@ class DownloadConfig:
     concurrency: int = 5
     metadata_concurrency: int = 10
     resolve_artists_from_asins: bool = True
+    naming: NamingScheme | None = None
+
+
+def resolve_naming_scheme() -> NamingScheme:
+    s = get_settings()
+    return NamingScheme(
+        folder_template=s.get("folder_template") or DEFAULT_FOLDER_TEMPLATE,
+        file_template=s.get("file_template") or DEFAULT_FILE_TEMPLATE,
+        multi_disc_file_template=(
+            s.get("multi_disc_file_template") or DEFAULT_MULTI_DISC_FILE_TEMPLATE
+        ),
+    )
 
 
 def load_accounts() -> dict:
