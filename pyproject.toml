@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "amzdl"
-version = "2.10.7"
+version = "2.11"
 authors = [ { name="alcts", email="all_clients@alcts.xyz" } ]
 requires-python = ">=3.10"
 description = "Download tracks, albums, playlists, and artists from Amazon Music"
