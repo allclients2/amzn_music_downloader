@@ -113,6 +113,7 @@ def _download_config(settings, args) -> DownloadConfig:
             args.metadata_concurrency or settings["default_metadata_concurrency"]
         ),
         resolve_artists_from_asins=settings["resolve_artists_from_asins"],
+        library_dirs=config.resolve_library_paths(),
         naming=config.resolve_naming_scheme(),
     )
 

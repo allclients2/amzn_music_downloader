@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "config": {
         "default_quality": "HD",
         "default_output": "~/Music/amzdl",
+        "library_paths": [],
         "folder_template": DEFAULT_FOLDER_TEMPLATE,
         "file_template": DEFAULT_FILE_TEMPLATE,
         "multi_disc_file_template": DEFAULT_MULTI_DISC_FILE_TEMPLATE,
@@ -103,6 +104,13 @@ def resolve_wvd_path(override: str | None = None) -> Path | None:
     return None
 
 
+def resolve_library_paths() -> list[Path]:
+    raw = get_settings().get("library_paths") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [Path(entry).expanduser() for entry in raw if entry]
+
+
 @dataclass
 class NamingScheme:
     folder_template: str = DEFAULT_FOLDER_TEMPLATE
@@ -118,6 +126,7 @@ class DownloadConfig:
     concurrency: int = 5
     metadata_concurrency: int = 10
     resolve_artists_from_asins: bool = True
+    library_dirs: list | None = None
     naming: NamingScheme | None = None
 
 

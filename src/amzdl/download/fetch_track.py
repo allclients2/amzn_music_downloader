@@ -85,11 +85,12 @@ def _fetch_credits(session, asin: str) -> dict:
         return {}
 
 
-def _existing_download(track_output_dir: Path, output_filename: str):
-    for ext in _AUDIO_EXTENSIONS:
-        candidate = track_output_dir / (output_filename + ext)
-        if candidate.exists():
-            return candidate
+def _existing_download(search_dirs, output_filename: str):
+    for directory in search_dirs:
+        for ext in _AUDIO_EXTENSIONS:
+            candidate = directory / (output_filename + ext)
+            if candidate.exists():
+                return candidate
     return None
 
 
@@ -177,11 +178,11 @@ async def process_track(
     track_output_dir = output_dir / rel_dir
     output_file = track_output_dir / (output_filename + extension)
 
-    existing = _existing_download(track_output_dir, output_filename)
+    search_dirs = [track_output_dir]
+    search_dirs.extend(Path(lib) / rel_dir for lib in (cfg.library_dirs or ()))
+    existing = _existing_download(search_dirs, output_filename)
     if existing is not None:
-        _log.info(
-            "file %s already exists (%s); skipping.", output_filename, existing.suffix
-        )
+        _log.info("file already exists (%s); skipping.", existing)
         return True
 
     base_temp = output_dir / _TEMP_SUBDIR
