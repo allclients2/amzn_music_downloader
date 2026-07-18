@@ -27,7 +27,7 @@ def _add_download_args(parser):
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help="Enable verbose logging",
+        help="Verbose logging + plain (non-animated) progress output",
     )
     parser.add_argument(
         "--quality",
@@ -52,10 +52,48 @@ def _add_download_args(parser):
     )
 
 
+_TOP_EPILOG = """\
+subcommands:
+  amzdl <INPUT>              download (default; INPUT = ASIN, link, or text file)
+  amzdl search [QUERY]       search the catalog, then pick a result to download
+  amzdl accounts             manage stored accounts (interactive menu)
+  amzdl account              alias for `accounts`
+
+download INPUT:
+  a bare ASIN, an Amazon Music link (any region domain; `trackAsin=` selects one
+  track), or a path to a text file of ASINs/links (one per line, `#` comments and
+  blank lines ignored). Resolves a track, album, artist (whole discography), or
+  playlist (catalog or user/library). A text file downloads as one batch.
+
+output:
+  lossless FLAC (lossy tiers keep their native container), tagged with embedded
+  cover art and a sidecar .lrc, laid out under the output dir by a configurable
+  naming scheme (folder_template / file_template in config.json).
+
+search:
+  amzdl search [QUERY] --type {track,album,artist,playlist} [--search-limit N]
+  omitted QUERY / --type are prompted for. The download flags below also apply
+  to the picked result.
+
+accounts:
+  amzdl accounts                    interactive menu (add / remove / quit)
+  amzdl accounts --add [COUNTRY]    sign in (browser OAuth); prompts region if omitted
+  amzdl accounts --delete <ID>      remove by customer id, name, or country code
+
+config:
+  first run generates a config/ folder (config.json + credentials.bin); an account
+  must be added once before anything can be downloaded. Flags override the matching
+  config defaults (default_quality / default_output / default_wvd_path / ...).
+"""
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description=cli.paint(f"amzdl v{VERSION}", cli.CYAN),
-        epilog="Manage accounts: `amzdl accounts`",
+        prog="amzdl",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=cli.paint(f"amzdl v{VERSION}", cli.CYAN)
+        + " — download Amazon Music tracks/albums/artists/playlists as tagged FLAC",
+        epilog=_TOP_EPILOG,
     )
 
     parser.add_argument(
