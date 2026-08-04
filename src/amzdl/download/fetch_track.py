@@ -178,12 +178,13 @@ async def process_track(
     track_output_dir = output_dir / rel_dir
     output_file = track_output_dir / (output_filename + extension)
 
-    search_dirs = [track_output_dir]
-    search_dirs.extend(Path(lib) / rel_dir for lib in (cfg.library_dirs or ()))
-    existing = _existing_download(search_dirs, output_filename)
-    if existing is not None:
-        _log.info("file already exists (%s); skipping.", existing)
-        return True
+    if not cfg.force:
+        search_dirs = [track_output_dir]
+        search_dirs.extend(Path(lib) / rel_dir for lib in (cfg.library_dirs or ()))
+        existing = _existing_download(search_dirs, output_filename)
+        if existing is not None:
+            _log.info("file already exists (%s); skipping.", existing)
+            return True
 
     base_temp = output_dir / _TEMP_SUBDIR
     base_temp.mkdir(parents=True, exist_ok=True)
@@ -246,7 +247,7 @@ async def process_track(
     )
 
     track_output_dir.mkdir(parents=True, exist_ok=True)
-    media_temp.rename(output_file)
+    media_temp.replace(output_file)
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     if lyrics_obj.has_content() and lyrics_obj.to_lrc():

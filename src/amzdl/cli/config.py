@@ -128,6 +128,7 @@ class DownloadConfig:
     resolve_artists_from_asins: bool = True
     library_dirs: list | None = None
     naming: NamingScheme | None = None
+    force: bool = False
 
 
 def resolve_naming_scheme() -> NamingScheme:

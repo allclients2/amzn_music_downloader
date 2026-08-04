@@ -48,6 +48,12 @@ def _add_download_args(parser):
              "One device is used per run (default: config default_device_path)",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download even if the file already exists, overwriting it. Skips "
+             "the duplicate check against both the output dir and library_paths",
+    )
+    parser.add_argument(
         "--metadata-concurrency",
         type=int,
         default=None,
@@ -164,6 +170,7 @@ def _download_config(settings, args) -> DownloadConfig:
         resolve_artists_from_asins=settings["resolve_artists_from_asins"],
         library_dirs=config.resolve_library_paths(),
         naming=config.resolve_naming_scheme(),
+        force=args.force,
     )
 
 
