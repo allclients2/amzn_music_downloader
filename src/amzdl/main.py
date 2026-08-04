@@ -8,6 +8,7 @@ from amzdl.api import auth
 from amzdl.cli import cli, config, prompts
 from amzdl.cli.config import DownloadConfig
 from amzdl.download import links
+from amzdl.download.device import DrmDeviceError
 from amzdl.download.download import download, download_batch
 from amzdl.metadata.search import SEARCH_TYPES, normalize_type, search_catalog
 
@@ -38,9 +39,13 @@ def _add_download_args(parser):
              "_HIGH], SPATIAL_RA360[_L0..L3]). Default: config default_quality",
     )
     parser.add_argument(
+        "--device-path",
         "--wvd-path",
+        dest="device_path",
         default=None,
-        help="Path to the Widevine device file (default: config default_wvd_path)",
+        metavar="PATH",
+        help="Path to the DRM device file — .wvd (Widevine) or .prd (PlayReady). "
+             "One device is used per run (default: config default_device_path)",
     )
     parser.add_argument(
         "--metadata-concurrency",
@@ -83,7 +88,7 @@ accounts:
 config:
   first run generates a config/ folder (config.json + credentials.bin); an account
   must be added once before anything can be downloaded. Flags override the matching
-  config defaults (default_quality / default_output / default_wvd_path / ...).
+  config defaults (default_quality / default_output / default_device_path / ...).
 """
 
 
@@ -142,9 +147,15 @@ def parse_search_args(argv):
 
 
 def _download_config(settings, args) -> DownloadConfig:
+    try:
+        device = config.resolve_drm_device(args.device_path)
+    except DrmDeviceError as exc:
+        cli.print_error(str(exc))
+        sys.exit(1)
+
     return DownloadConfig(
         quality=args.quality or settings["default_quality"],
-        wvd_path=config.resolve_wvd_path(args.wvd_path),
+        device=device,
         plain=args.verbose,
         concurrency=settings["default_concurrency"],
         metadata_concurrency=(
@@ -184,10 +195,6 @@ async def run_search(args):
     if choice is None:
         return
 
-    if cfg.wvd_path is not None and not Path(cfg.wvd_path).exists():
-        cli.print_error(f"Widevine device not found: {cfg.wvd_path}")
-        sys.exit(1)
-
     type_hint = search_type if settings["use_link_hints"] else None
     await download(session, results[choice].asin, output_dir, cfg,
                    type_hint=type_hint)
@@ -207,10 +214,6 @@ async def run_download(args):
         sys.exit(1)
     if not asins:
         cli.print_error("No ASINs or links found in input")
-        sys.exit(1)
-
-    if cfg.wvd_path is not None and not Path(cfg.wvd_path).exists():
-        cli.print_error(f"Widevine device not found: {cfg.wvd_path}")
         sys.exit(1)
 
     hint = (

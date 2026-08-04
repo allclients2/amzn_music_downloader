@@ -1,6 +1,9 @@
 """DASH manifest retrieval, parsing, and stream selection. Fetches the manifest
 from `getDashManifestsV2`, parses it into representations, and picks one by
-quality tier (using the web TRACK_PSSH block, the one with no `value`)."""
+quality tier. Each representation carries both key handles the CDMs need: the web
+TRACK_PSSH block (the Widevine one with no `value`) and the `cenc:default_KID`,
+which is what PlayReady builds its WRM header from since Amazon serves no
+PlayReady ContentProtection block."""
 
 import logging
 import xml.etree.ElementTree as ET
@@ -163,6 +166,15 @@ def _web_pssh(adaptation) -> str:
     return None
 
 
+def _default_kid(adaptation) -> str:
+    attribute = f"{{{_NS['cenc']}}}default_KID"
+    for cp in adaptation.findall("mpd:ContentProtection", _NS):
+        kid = cp.attrib.get(attribute)
+        if kid:
+            return kid
+    return None
+
+
 def parse_mpd(raw_xml: str):
     root = ET.fromstring(raw_xml)
     representations = []
@@ -180,6 +192,7 @@ def parse_mpd(raw_xml: str):
                 reference_loudness = prop.attrib.get("value")
 
         adaptation_pssh = _web_pssh(adaptation)
+        adaptation_kid = _default_kid(adaptation)
 
         for rep in adaptation.findall("mpd:Representation", _NS):
             base_url = rep.find("mpd:BaseURL", _NS)
@@ -210,6 +223,7 @@ def parse_mpd(raw_xml: str):
                     segments[0].attrib.get("mediaRange") if segments else None
                 ),
                 "pssh": adaptation_pssh,
+                "kid": adaptation_kid,
                 "reference_loudness": reference_loudness,
             })
 

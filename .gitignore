@@ -1,4 +1,5 @@
 *.wvd
+*.prd
 *.mp4
 *.lrc
 config.json

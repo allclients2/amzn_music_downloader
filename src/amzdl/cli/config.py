@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from amzdl.download.device import EMBEDDED_WIDEVINE, DrmDevice, resolve_device
 from amzdl.utils import (
     DEFAULT_FILE_TEMPLATE,
     DEFAULT_FOLDER_TEMPLATE,
@@ -41,7 +42,7 @@ DEFAULT_CONFIG = {
         "folder_template": DEFAULT_FOLDER_TEMPLATE,
         "file_template": DEFAULT_FILE_TEMPLATE,
         "multi_disc_file_template": DEFAULT_MULTI_DISC_FILE_TEMPLATE,
-        "default_wvd_path": "",
+        "default_device_path": "",
         "default_account": "",
         "default_concurrency": 5,
         "default_metadata_concurrency": 10,
@@ -85,6 +86,10 @@ def load_config() -> dict:
                 cfg["use_link_hints"] = cfg.pop("use_type_hints")
             else:
                 cfg.pop("use_type_hints", None)
+            if "default_wvd_path" in cfg and "default_device_path" not in cfg:
+                cfg["default_device_path"] = cfg.pop("default_wvd_path")
+            else:
+                cfg.pop("default_wvd_path", None)
             merged["config"].update(cfg)
         if isinstance(data.get("accounts"), dict):
             merged["accounts"] = data["accounts"]
@@ -95,13 +100,8 @@ def get_settings() -> dict:
     return load_config()["config"]
 
 
-def resolve_wvd_path(override: str | None = None) -> Path | None:
-    if override:
-        return Path(override).expanduser()
-    configured = get_settings()["default_wvd_path"]
-    if configured:
-        return Path(configured).expanduser()
-    return None
+def resolve_drm_device(override: str | None = None) -> DrmDevice:
+    return resolve_device(override or get_settings()["default_device_path"])
 
 
 def resolve_library_paths() -> list[Path]:
@@ -121,7 +121,7 @@ class NamingScheme:
 @dataclass(frozen=True)
 class DownloadConfig:
     quality: str
-    wvd_path: str | None = None
+    device: DrmDevice = EMBEDDED_WIDEVINE
     plain: bool = False
     concurrency: int = 5
     metadata_concurrency: int = 10

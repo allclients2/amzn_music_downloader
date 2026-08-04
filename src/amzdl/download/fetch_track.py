@@ -203,7 +203,7 @@ async def process_track(
     step("downloading track")
     coros = [
         asyncio.to_thread(
-            Keys.getContentKeys, session, track.asin, rep["pssh"], cfg.wvd_path
+            Keys.getContentKeys, session, track.asin, rep, cfg.device
         ),
         asyncio.to_thread(
             download_full_file, rep["base_url"], encrypted_file, on_bytes
