@@ -6,7 +6,9 @@ from pathlib import Path
 from amzdl._version import VERSION
 from amzdl.api import auth
 from amzdl.cli import cli, config, prompts
+from amzdl.cli.config import DownloadConfig
 from amzdl.download import links
+from amzdl.download.device import DrmDeviceError
 from amzdl.download.download import download, download_batch
 from amzdl.metadata.search import SEARCH_TYPES, normalize_type, search_catalog
 
@@ -26,7 +28,7 @@ def _add_download_args(parser):
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help="Enable verbose logging",
+        help="Verbose logging + plain (non-animated) progress output",
     )
     parser.add_argument(
         "--quality",
@@ -37,9 +39,19 @@ def _add_download_args(parser):
              "_HIGH], SPATIAL_RA360[_L0..L3]). Default: config default_quality",
     )
     parser.add_argument(
+        "--device-path",
         "--wvd-path",
+        dest="device_path",
         default=None,
-        help="Path to the Widevine device file (default: config default_wvd_path)",
+        metavar="PATH",
+        help="Path to the DRM device file — .wvd (Widevine) or .prd (PlayReady). "
+             "One device is used per run (default: config default_device_path)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download even if the file already exists, overwriting it. Skips "
+             "the duplicate check against both the output dir and library_paths",
     )
     parser.add_argument(
         "--metadata-concurrency",
@@ -51,10 +63,48 @@ def _add_download_args(parser):
     )
 
 
+_TOP_EPILOG = """\
+subcommands:
+  amzdl <INPUT>              download (default; INPUT = ASIN, link, or text file)
+  amzdl search [QUERY]       search the catalog, then pick a result to download
+  amzdl accounts             manage stored accounts (interactive menu)
+  amzdl account              alias for `accounts`
+
+download INPUT:
+  a bare ASIN, an Amazon Music link (any region domain; `trackAsin=` selects one
+  track), or a path to a text file of ASINs/links (one per line, `#` comments and
+  blank lines ignored). Resolves a track, album, artist (whole discography), or
+  playlist (catalog or user/library). A text file downloads as one batch.
+
+output:
+  lossless FLAC (lossy tiers keep their native container), tagged with embedded
+  cover art and a sidecar .lrc, laid out under the output dir by a configurable
+  naming scheme (folder_template / file_template in config.json).
+
+search:
+  amzdl search [QUERY] --type {track,album,artist,playlist} [--search-limit N]
+  omitted QUERY / --type are prompted for. The download flags below also apply
+  to the picked result.
+
+accounts:
+  amzdl accounts                    interactive menu (add / remove / quit)
+  amzdl accounts --add [COUNTRY]    sign in (browser OAuth); prompts region if omitted
+  amzdl accounts --delete <ID>      remove by customer id, name, or country code
+
+config:
+  first run generates a config/ folder (config.json + credentials.bin); an account
+  must be added once before anything can be downloaded. Flags override the matching
+  config defaults (default_quality / default_output / default_device_path / ...).
+"""
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description=cli.paint(f"amzdl v{VERSION}", cli.CYAN),
-        epilog="Manage accounts: `amzdl accounts`",
+        prog="amzdl",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=cli.paint(f"amzdl v{VERSION}", cli.CYAN)
+        + " — download Amazon Music tracks/albums/artists/playlists as tagged FLAC",
+        epilog=_TOP_EPILOG,
     )
 
     parser.add_argument(
@@ -102,17 +152,34 @@ def parse_search_args(argv):
     return parser.parse_args(argv)
 
 
+def _download_config(settings, args) -> DownloadConfig:
+    try:
+        device = config.resolve_drm_device(args.device_path)
+    except DrmDeviceError as exc:
+        cli.print_error(str(exc))
+        sys.exit(1)
+
+    return DownloadConfig(
+        quality=args.quality or settings["default_quality"],
+        device=device,
+        plain=args.verbose,
+        concurrency=settings["default_concurrency"],
+        metadata_concurrency=(
+            args.metadata_concurrency or settings["default_metadata_concurrency"]
+        ),
+        resolve_artists_from_asins=settings["resolve_artists_from_asins"],
+        library_dirs=config.resolve_library_paths(),
+        naming=config.resolve_naming_scheme(),
+        force=args.force,
+    )
+
+
 async def run_search(args):
     cli.setup_logging(args.verbose)
 
     settings = config.get_settings()
-    quality = args.quality or settings["default_quality"]
-    wvd_path = config.resolve_wvd_path(args.wvd_path)
+    cfg = _download_config(settings, args)
     output_dir = Path(args.output or settings["default_output"]).expanduser()
-    concurrency = settings["default_concurrency"]
-    metadata_concurrency = (
-        args.metadata_concurrency or settings["default_metadata_concurrency"]
-    )
     limit = args.search_limit or settings["default_search_limit"]
 
     session = auth.get_session(account=args.account)
@@ -135,27 +202,17 @@ async def run_search(args):
     if choice is None:
         return
 
-    if wvd_path is not None and not Path(wvd_path).exists():
-        cli.print_error(f"Widevine device not found: {wvd_path}")
-        sys.exit(1)
-
     type_hint = search_type if settings["use_link_hints"] else None
-    await download(session, results[choice].asin, output_dir, quality, wvd_path,
-                   plain=args.verbose, concurrency=concurrency,
-                   metadata_concurrency=metadata_concurrency, type_hint=type_hint)
+    await download(session, results[choice].asin, output_dir, cfg,
+                   type_hint=type_hint)
 
 
 async def run_download(args):
     cli.setup_logging(args.verbose)
 
     settings = config.get_settings()
-    quality = args.quality or settings["default_quality"]
-    wvd_path = config.resolve_wvd_path(args.wvd_path)
+    cfg = _download_config(settings, args)
     output_dir = Path(args.output or settings["default_output"]).expanduser()
-    concurrency = settings["default_concurrency"]
-    metadata_concurrency = (
-        args.metadata_concurrency or settings["default_metadata_concurrency"]
-    )
 
     try:
         asins = links.resolve_inputs(args.content_asin)
@@ -164,10 +221,6 @@ async def run_download(args):
         sys.exit(1)
     if not asins:
         cli.print_error("No ASINs or links found in input")
-        sys.exit(1)
-
-    if wvd_path is not None and not Path(wvd_path).exists():
-        cli.print_error(f"Widevine device not found: {wvd_path}")
         sys.exit(1)
 
     hint = (
@@ -180,15 +233,9 @@ async def run_download(args):
 
     source = links.input_file_label(args.content_asin)
     if source is not None:
-        await download_batch(session, source, asins, output_dir, quality, wvd_path,
-                             plain=args.verbose, concurrency=concurrency,
-                             metadata_concurrency=metadata_concurrency)
+        await download_batch(session, source, asins, output_dir, cfg)
     else:
-        type_hint = hint.type
-        await download(session, asins[0], output_dir, quality, wvd_path,
-                       plain=args.verbose, concurrency=concurrency,
-                       metadata_concurrency=metadata_concurrency,
-                       type_hint=type_hint)
+        await download(session, asins[0], output_dir, cfg, type_hint=hint.type)
 
 
 def _account_options():

@@ -14,15 +14,43 @@ import requests
 from amzdl.download.keys import Keys
 from amzdl.download.mpd_info import _AUDIO_EXTENSIONS, find_representation
 from amzdl.metadata.lyrics import Lyrics
-from amzdl.metadata.metadata import TrackMetadata, resolve_track_cover
-from amzdl.metadata.tagging import download_artwork, tag_track
+from amzdl.metadata.metadata import (
+    TrackMetadata,
+    resolve_artist_names,
+    resolve_track_cover,
+)
+from amzdl.metadata.tagging import (
+    artists_covering_display,
+    artists_from_credits,
+    download_artwork,
+    tag_track,
+)
 from amzdl.remux.decrypt import decrypt_mp4
 from amzdl.remux.remux import remux_ac4, remux_flac, remux_mp4, remux_opus
-from amzdl.utils import build_output_filename, safe_filename
+from amzdl.utils import (
+    DEFAULT_FILE_TEMPLATE,
+    DEFAULT_FOLDER_TEMPLATE,
+    DEFAULT_MULTI_DISC_FILE_TEMPLATE,
+    render_track_relpath,
+)
 
 _log = logging.getLogger("downloader.track")
 
 _TEMP_SUBDIR = ".downloader"
+
+
+async def _resolve_artists(
+    session, track: TrackMetadata, credits: dict, use_asin_fallback: bool
+) -> list[str]:
+    artists = artists_from_credits(credits)
+    if not artists and use_asin_fallback and track.contributor_asins:
+        resolved = await asyncio.to_thread(
+            resolve_artist_names, session, track.contributor_asins
+        )
+        artists = artists_covering_display(track.artist, resolved)
+    if not artists and track.artist:
+        artists = [track.artist]
+    return artists
 
 def _output_spec(codec):
     c = str(codec or "").lower()
@@ -57,11 +85,12 @@ def _fetch_credits(session, asin: str) -> dict:
         return {}
 
 
-def _existing_download(track_output_dir: Path, output_filename: str):
-    for ext in _AUDIO_EXTENSIONS:
-        candidate = track_output_dir / (output_filename + ext)
-        if candidate.exists():
-            return candidate
+def _existing_download(search_dirs, output_filename: str):
+    for directory in search_dirs:
+        for ext in _AUDIO_EXTENSIONS:
+            candidate = directory / (output_filename + ext)
+            if candidate.exists():
+                return candidate
     return None
 
 
@@ -72,14 +101,23 @@ def purge_temp_dir(output_dir: Path) -> None:
 _DOWNLOAD_CHUNK = 1024 * 1024
 
 
-def download_full_file(base_url: str, output_path):
+def download_full_file(base_url: str, output_path, on_bytes=None):
     r = requests.get(base_url, stream=True)
     if r.status_code != 200:
         _log.error("download failed. Status code: %s", r.status_code)
         return None
     r.raw.decode_content = True
+    total = int(r.headers.get("Content-Length") or 0)
+    transferred = 0
     with open(output_path, "wb") as f:
-        shutil.copyfileobj(r.raw, f, length=_DOWNLOAD_CHUNK)
+        while True:
+            chunk = r.raw.read(_DOWNLOAD_CHUNK)
+            if not chunk:
+                break
+            f.write(chunk)
+            transferred += len(chunk)
+            if on_bytes:
+                on_bytes(transferred, total)
     return output_path
 
 
@@ -103,11 +141,12 @@ async def process_track(
     track: TrackMetadata,
     representation,
     output_dir: Path,
+    cfg,
     build_folder_structure: bool = True,
     lyrics_resp=None,
     on_step=None,
-    wvd_path: str | None = None,
     resolve_hi_res_cover: bool = False,
+    on_bytes=None,
 ):
     def step(desc):
         _log.debug(desc)
@@ -118,25 +157,34 @@ async def process_track(
         _log.warning("no playable representation for %s; skipping.", track.title)
         return
 
+    naming = cfg.naming
     rep = representation.mpd_representation
     extension, tag_mode = _output_spec(rep.get("codec"))
 
-    if build_folder_structure:
-        safe_album_artist_name = safe_filename(track.album_artist, False)
-        safe_album_name = safe_filename(track.album_name, False)
-        track_output_dir = output_dir / safe_album_artist_name / safe_album_name
+    folder_template = naming.folder_template if naming else DEFAULT_FOLDER_TEMPLATE
+    if (track.total_discs or 0) > 1:
+        file_template = (
+            naming.multi_disc_file_template if naming
+            else DEFAULT_MULTI_DISC_FILE_TEMPLATE
+        )
     else:
-        track_output_dir = output_dir
+        file_template = naming.file_template if naming else DEFAULT_FILE_TEMPLATE
 
-    output_filename = build_output_filename(track.disc, track.track_number, track.title)
+    relpath = render_track_relpath(
+        track, folder_template if build_folder_structure else "", file_template
+    )
+    rel_dir = relpath.parent
+    output_filename = relpath.name
+    track_output_dir = output_dir / rel_dir
     output_file = track_output_dir / (output_filename + extension)
 
-    existing = _existing_download(track_output_dir, output_filename)
-    if existing is not None:
-        _log.info(
-            "file %s already exists (%s); skipping.", output_filename, existing.suffix
-        )
-        return True
+    if not cfg.force:
+        search_dirs = [track_output_dir]
+        search_dirs.extend(Path(lib) / rel_dir for lib in (cfg.library_dirs or ()))
+        existing = _existing_download(search_dirs, output_filename)
+        if existing is not None:
+            _log.info("file already exists (%s); skipping.", existing)
+            return True
 
     base_temp = output_dir / _TEMP_SUBDIR
     base_temp.mkdir(parents=True, exist_ok=True)
@@ -151,12 +199,16 @@ async def process_track(
         )
         return download_artwork(url, str(temp_dir))
 
+    await asyncio.to_thread(session.ensure_fresh_token)
+
     step("downloading track")
     coros = [
         asyncio.to_thread(
-            Keys.getContentKeys, session, track.asin, rep["pssh"], wvd_path
+            Keys.getContentKeys, session, track.asin, rep, cfg.device
         ),
-        asyncio.to_thread(download_full_file, rep["base_url"], encrypted_file),
+        asyncio.to_thread(
+            download_full_file, rep["base_url"], encrypted_file, on_bytes
+        ),
         asyncio.to_thread(fetch_cover),
         asyncio.to_thread(_fetch_credits, session, track.asin),
     ]
@@ -185,14 +237,17 @@ async def process_track(
 
     step("tagging metadata")
     lyrics_obj = Lyrics.from_xray(lyrics_resp)
+    artists = await _resolve_artists(
+        session, track, credits, cfg.resolve_artists_from_asins
+    )
     await asyncio.to_thread(
         tag_track, str(media_temp), track, lyrics_obj, str(temp_dir), tag_mode,
         artwork_path,
-        _track_url(session, track), credits, rep.get("reference_loudness"),
+        _track_url(session, track), credits, rep.get("reference_loudness"), artists,
     )
 
     track_output_dir.mkdir(parents=True, exist_ok=True)
-    media_temp.rename(output_file)
+    media_temp.replace(output_file)
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     if lyrics_obj.has_content() and lyrics_obj.to_lrc():
@@ -205,17 +260,16 @@ async def fetch_track(
     session,
     track: TrackMetadata,
     output_dir: Path,
-    quality,
+    cfg,
     build_folder_structure: bool = True,
     on_step=None,
-    wvd_path: str | None = None,
 ):
     if on_step:
         on_step("fetching manifest")
     representation = await asyncio.to_thread(
-        find_representation, session, track.asin, quality
+        find_representation, session, track.asin, cfg.quality
     )
     return await process_track(
-        session, track, representation, output_dir, build_folder_structure,
-        on_step=on_step, wvd_path=wvd_path,
+        session, track, representation, output_dir, cfg, build_folder_structure,
+        on_step=on_step,
     )

@@ -5,6 +5,7 @@ the same two-phase bar."""
 
 import asyncio
 import logging
+from pathlib import Path
 
 from amzdl.cli import cli
 from amzdl.cli.progress import Progress
@@ -50,9 +51,9 @@ def _has_lyrics(resp) -> bool:
     return bool((resp.get("lyrics") or {}).get("lines"))
 
 
-async def download(session, asin, output_dir, quality, wvd_path=None, plain=False,
-                   concurrency=5, metadata_concurrency=10, type_hint=None):
-    prog = Progress(asin=asin, plain=plain)
+async def download(session, asin, output_dir, cfg, type_hint=None, on_bytes=None):
+    output_dir = Path(output_dir)
+    prog = Progress(asin=asin, plain=cfg.plain)
 
     try:
         track_streams = None
@@ -63,7 +64,7 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
                     fetch_metadata, session, asin, defer_track_cover=True,
                     type_hint=type_hint,
                 ),
-                _fetch_track_streams(session, asin, quality),
+                _fetch_track_streams(session, asin, cfg.quality),
             )
             kind, meta = meta_res
         else:
@@ -75,48 +76,44 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
 
         if kind == "artist":
             prog.abort()
-            await _download_artist(
-                session, asin, meta, output_dir, quality, wvd_path, plain,
-                concurrency, metadata_concurrency
-            )
+            await _download_artist(session, asin, meta, output_dir, cfg)
             return
 
         if kind == "playlist":
             prog.abort()
-            await _download_playlist(
-                session, asin, meta, output_dir, quality, wvd_path, plain,
-                concurrency, metadata_concurrency
-            )
+            await _download_playlist(session, asin, meta, output_dir, cfg)
             return
 
         if kind == "track":
             prog.set_name(meta.title)
             if track_streams is None:
                 prog.set_desc("fetching manifest & lyrics")
-                track_streams = await _fetch_track_streams(session, meta.asin, quality)
+                track_streams = await _fetch_track_streams(
+                    session, meta.asin, cfg.quality
+                )
             reps_res, lyrics_res = track_streams
             representations = reps_res
             if isinstance(representations, Exception) or not representations:
-                representations = fetch_representations(session, meta.asin, quality)
-            representation = select_representation(meta.asin, representations, quality)
+                representations = fetch_representations(session, meta.asin, cfg.quality)
+            representation = select_representation(
+                meta.asin, representations, cfg.quality
+            )
             lyrics_resp = None if isinstance(lyrics_res, Exception) else lyrics_res
             if meta.asin != asin and not _has_lyrics(lyrics_resp):
                 lyrics_resp = await asyncio.to_thread(
                     session.get_track_lyrics, meta.asin
                 )
             skipped = await process_track(
-                session, meta, representation, output_dir, True, lyrics_resp,
-                on_step=lambda desc: prog.update(desc), wvd_path=wvd_path,
-                resolve_hi_res_cover=True,
+                session, meta, representation, output_dir, cfg, True, lyrics_resp,
+                on_step=lambda desc: prog.update(desc),
+                resolve_hi_res_cover=True, on_bytes=on_bytes,
             )
             prog.finish()
             _note_skipped([skipped])
         else:
             prog.set_name(meta.album_name)
             prog.begin_custom(len(meta.tracks))
-            results = await _run_tracks(
-                prog, session, meta.tracks, output_dir, quality, wvd_path, concurrency
-            )
+            results = await _run_tracks(prog, session, meta.tracks, output_dir, cfg)
             prog.finish()
             _note_skipped(results)
     except Exception:
@@ -126,19 +123,16 @@ async def download(session, asin, output_dir, quality, wvd_path=None, plain=Fals
         purge_temp_dir(output_dir)
 
 
-async def _run_tracks(
-    prog, session, tracks, output_dir, quality, wvd_path, concurrency
-):
-    sem = asyncio.Semaphore(concurrency)
+async def _run_tracks(prog, session, tracks, output_dir, cfg):
+    sem = asyncio.Semaphore(cfg.concurrency)
 
     async def run_track(track):
         async with sem:
             slot = prog.track_start(track.title)
             try:
                 return await fetch_track(
-                    session, track, output_dir, quality,
+                    session, track, output_dir, cfg,
                     on_step=lambda desc: prog.track_step(slot, desc),
-                    wvd_path=wvd_path,
                 )
             finally:
                 prog.track_done(slot)
@@ -182,19 +176,19 @@ async def _resolve_to_tracks(session, asin, metadata_concurrency):
     return []
 
 
-async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
-                           plain, concurrency, metadata_concurrency):
+async def _download_artist(session, asin, artist, output_dir, cfg):
     albums = artist.album_asins
     if not albums:
         cli.note(f"No albums found for artist '{artist.name}'.")
         return
 
-    prog = Progress(asin=asin, plain=plain)
+    prog = Progress(asin=asin, plain=cfg.plain)
     prog.set_name(artist.name)
     try:
         prog.begin_custom(len(albums), rate_label="albums/s")
         tracks = await _artist_tracks(
-            session, artist, metadata_concurrency, on_album=prog.advance_aggregate
+            session, artist, cfg.metadata_concurrency,
+            on_album=prog.advance_aggregate,
         )
         if not tracks:
             prog.abort()
@@ -202,9 +196,7 @@ async def _download_artist(session, asin, artist, output_dir, quality, wvd_path,
             return
 
         prog.begin_custom(len(tracks), rate_label="tracks/s")
-        results = await _run_tracks(
-            prog, session, tracks, output_dir, quality, wvd_path, concurrency
-        )
+        results = await _run_tracks(prog, session, tracks, output_dir, cfg)
         prog.finish()
         _note_skipped(results)
     except Exception:
@@ -279,23 +271,22 @@ async def _build_playlist_tracks(session, rich, albums, by_album, track_asins,
     return [built[a] for a in track_asins if a in built]
 
 
-async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_path,
-                             plain, concurrency, metadata_concurrency):
+async def _download_playlist(session, asin, playlist, output_dir, cfg):
     track_asins = playlist.track_asins
     if not track_asins:
         cli.note(f"No tracks found in playlist '{playlist.name}'.")
         return
 
-    prog = Progress(asin=asin, plain=plain)
+    prog = Progress(asin=asin, plain=cfg.plain)
     prog.set_name(playlist.name)
     try:
         prog.set_desc("fetching metadata")
         rich, albums, by_album = await _playlist_member_meta(
-            session, track_asins, metadata_concurrency
+            session, track_asins, cfg.metadata_concurrency
         )
         prog.begin_custom(len(by_album), rate_label="albums/s")
         tracks = await _build_playlist_tracks(
-            session, rich, albums, by_album, track_asins, metadata_concurrency,
+            session, rich, albums, by_album, track_asins, cfg.metadata_concurrency,
             on_album=prog.advance_aggregate,
         )
         if not tracks:
@@ -304,9 +295,7 @@ async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_p
             return
 
         prog.begin_custom(len(tracks), rate_label="tracks/s")
-        results = await _run_tracks(
-            prog, session, tracks, output_dir, quality, wvd_path, concurrency
-        )
+        results = await _run_tracks(prog, session, tracks, output_dir, cfg)
         prog.finish()
         _note_skipped(results)
     except Exception:
@@ -316,20 +305,20 @@ async def _download_playlist(session, asin, playlist, output_dir, quality, wvd_p
         purge_temp_dir(output_dir)
 
 
-async def download_batch(session, source_label, asins, output_dir, quality, wvd_path,
-                         plain, concurrency, metadata_concurrency):
-    prog = Progress(asin=source_label, plain=plain)
+async def download_batch(session, source_label, asins, output_dir, cfg):
+    output_dir = Path(output_dir)
+    prog = Progress(asin=source_label, plain=cfg.plain)
     failures = []
     try:
         prog.begin_custom(len(asins), rate_label="input/s")
-        sem = asyncio.Semaphore(max(1, metadata_concurrency))
+        sem = asyncio.Semaphore(max(1, cfg.metadata_concurrency))
         per_input = [None] * len(asins)
 
         async def resolve_one(idx, asin):
             async with sem:
                 try:
                     per_input[idx] = await _resolve_to_tracks(
-                        session, asin, metadata_concurrency
+                        session, asin, cfg.metadata_concurrency
                     )
                 except Exception as exc:
                     failures.append((asin, str(exc) or type(exc).__name__))
@@ -346,9 +335,7 @@ async def download_batch(session, source_label, asins, output_dir, quality, wvd_
             return
 
         prog.begin_custom(len(tracks), rate_label="tracks/s")
-        results = await _run_tracks(
-            prog, session, tracks, output_dir, quality, wvd_path, concurrency
-        )
+        results = await _run_tracks(prog, session, tracks, output_dir, cfg)
         prog.finish()
         _note_skipped(results)
         _report_failures(failures, len(asins))

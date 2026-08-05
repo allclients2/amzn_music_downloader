@@ -6,16 +6,24 @@ layouts."""
 import copy
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
+
+from amzdl.download.device import EMBEDDED_WIDEVINE, DrmDevice, resolve_device
+from amzdl.utils import (
+    DEFAULT_FILE_TEMPLATE,
+    DEFAULT_FOLDER_TEMPLATE,
+    DEFAULT_MULTI_DISC_FILE_TEMPLATE,
+)
 
 
 def _resolve_config_dir() -> Path:
-    cwd_config = Path("config")
-    if cwd_config.is_dir():
-        return cwd_config
     override = os.environ.get("AMZDL_CONFIG_DIR")
     if override:
         return Path(override).expanduser()
+    cwd_config = Path("config")
+    if cwd_config.is_dir():
+        return cwd_config
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
         return Path(xdg).expanduser() / "amzdl"
@@ -30,12 +38,17 @@ DEFAULT_CONFIG = {
     "config": {
         "default_quality": "HD",
         "default_output": "~/Music/amzdl",
-        "default_wvd_path": "",
+        "library_paths": [],
+        "folder_template": DEFAULT_FOLDER_TEMPLATE,
+        "file_template": DEFAULT_FILE_TEMPLATE,
+        "multi_disc_file_template": DEFAULT_MULTI_DISC_FILE_TEMPLATE,
+        "default_device_path": "",
         "default_account": "",
         "default_concurrency": 5,
         "default_metadata_concurrency": 10,
         "default_search_limit": 8,
         "use_link_hints": True,
+        "resolve_artists_from_asins": True,
     },
     "accounts": {},
 }
@@ -73,6 +86,10 @@ def load_config() -> dict:
                 cfg["use_link_hints"] = cfg.pop("use_type_hints")
             else:
                 cfg.pop("use_type_hints", None)
+            if "default_wvd_path" in cfg and "default_device_path" not in cfg:
+                cfg["default_device_path"] = cfg.pop("default_wvd_path")
+            else:
+                cfg.pop("default_wvd_path", None)
             merged["config"].update(cfg)
         if isinstance(data.get("accounts"), dict):
             merged["accounts"] = data["accounts"]
@@ -83,13 +100,46 @@ def get_settings() -> dict:
     return load_config()["config"]
 
 
-def resolve_wvd_path(override: str | None = None) -> Path | None:
-    if override:
-        return Path(override).expanduser()
-    configured = get_settings()["default_wvd_path"]
-    if configured:
-        return Path(configured).expanduser()
-    return None
+def resolve_drm_device(override: str | None = None) -> DrmDevice:
+    return resolve_device(override or get_settings()["default_device_path"])
+
+
+def resolve_library_paths() -> list[Path]:
+    raw = get_settings().get("library_paths") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [Path(entry).expanduser() for entry in raw if entry]
+
+
+@dataclass
+class NamingScheme:
+    folder_template: str = DEFAULT_FOLDER_TEMPLATE
+    file_template: str = DEFAULT_FILE_TEMPLATE
+    multi_disc_file_template: str = DEFAULT_MULTI_DISC_FILE_TEMPLATE
+
+
+@dataclass(frozen=True)
+class DownloadConfig:
+    quality: str
+    device: DrmDevice = EMBEDDED_WIDEVINE
+    plain: bool = False
+    concurrency: int = 5
+    metadata_concurrency: int = 10
+    resolve_artists_from_asins: bool = True
+    library_dirs: list | None = None
+    naming: NamingScheme | None = None
+    force: bool = False
+
+
+def resolve_naming_scheme() -> NamingScheme:
+    s = get_settings()
+    return NamingScheme(
+        folder_template=s.get("folder_template") or DEFAULT_FOLDER_TEMPLATE,
+        file_template=s.get("file_template") or DEFAULT_FILE_TEMPLATE,
+        multi_disc_file_template=(
+            s.get("multi_disc_file_template") or DEFAULT_MULTI_DISC_FILE_TEMPLATE
+        ),
+    )
 
 
 def load_accounts() -> dict:

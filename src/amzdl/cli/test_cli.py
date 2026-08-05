@@ -185,19 +185,18 @@ def _fake_representations(session, asin, quality=None):
     ]
 
 
-async def _fake_process_track(session, track, representation, output_dir,
+async def _fake_process_track(session, track, representation, output_dir, cfg,
                               build_folder_structure=True, lyrics_resp=None,
-                              on_step=None, wvd_path="device.wvd",
-                              resolve_hi_res_cover=False):
+                              on_step=None, resolve_hi_res_cover=False,
+                              on_bytes=None):
     for desc, delay in _FAKE_STEPS:
         if on_step:
             on_step(desc)
         await asyncio.sleep(delay)
 
 
-async def _fake_fetch_track(session, track, output_dir, quality,
-                            build_folder_structure=True, on_step=None,
-                            wvd_path="device.wvd"):
+async def _fake_fetch_track(session, track, output_dir, cfg,
+                            build_folder_structure=True, on_step=None):
     for desc, delay in _FAKE_ALBUM_STEPS:
         if on_step:
             on_step(desc)

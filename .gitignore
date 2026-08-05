@@ -1,4 +1,5 @@
 *.wvd
+*.prd
 *.mp4
 *.lrc
 config.json
@@ -26,3 +27,4 @@ flows.csv
 flows.mitm
 .ruff_cache
 .vscode
+scripts

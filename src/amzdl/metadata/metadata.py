@@ -27,6 +27,7 @@ class TrackMetadata:
     total_discs: int
     duration_seconds: int
     is_explicit: bool
+    abs_track_number: int | None = None
     isrc: str | None = None
     composers: str | None = None
     release_date: str | None = None
@@ -37,6 +38,7 @@ class TrackMetadata:
     review_average: float | None = None
     review_count: int | None = None
     cover_url: str | None = None
+    contributor_asins: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -190,6 +192,8 @@ def _build_track(
 ) -> TrackMetadata:
     product = album_data.get("productDetails") or {}
     review_average, review_count = _reviews(album_data)
+    disc = int(track_data.get("discNum") or 1)
+    track_number = int(track_data.get("trackNum") or 1)
     return TrackMetadata(
         asin=track_data.get("asin"),
         title=_strip_explicitness_label(track_data.get("title")),
@@ -198,8 +202,9 @@ def _build_track(
         album_artist=album_data.get("primaryArtistName")
         or (album_data.get("artist") or {}).get("name"),
         album_asin=album_data.get("asin"),
-        disc=int(track_data.get("discNum") or 1),
-        track_number=int(track_data.get("trackNum") or 1),
+        disc=disc,
+        track_number=track_number,
+        abs_track_number=_abs_track_number(album_data, disc, track_number),
         total_tracks=int(album_data.get("trackCount") or 1),
         total_discs=disc_total,
         duration_seconds=int(track_data.get("duration") or 0),
@@ -216,6 +221,9 @@ def _build_track(
         review_average=review_average,
         review_count=review_count,
         cover_url=cover_url,
+        contributor_asins=(
+            (track_data.get("artist") or {}).get("contributorAsins") or []
+        ),
     )
 
 
@@ -224,12 +232,35 @@ def _disc_total(album_data: dict) -> int:
     return max(discs) if discs else 1
 
 
+def _abs_track_number(album_data: dict, disc: int, track_number: int) -> int:
+    tracks = album_data.get("tracks") or []
+    prior = sum(1 for t in tracks if t and int(t.get("discNum") or 1) < disc)
+    return prior + track_number
+
+
 def _fetch_album_data(session: AmazonMusicMobileAPI, album_asin: str) -> dict:
     resp = session.get_metadata((album_asin,))
     albums = resp.get("albumList") or []
     if not albums:
         raise ValueError(f"album {album_asin} not found in muse response")
     return albums[0]
+
+
+def resolve_artist_names(
+    session: AmazonMusicMobileAPI, asins: list[str]
+) -> list[str]:
+    if not asins:
+        return []
+    try:
+        resp = session.get_metadata(tuple(asins))
+    except Exception:
+        return []
+    by_asin = {
+        a.get("asin"): a.get("name")
+        for a in (resp.get("artistList") or [])
+        if a.get("asin") and a.get("name")
+    }
+    return list(dict.fromkeys(by_asin[a] for a in asins if a in by_asin))
 
 
 def _fetch_tracks(session: AmazonMusicMobileAPI, asins: list[str]) -> dict:
