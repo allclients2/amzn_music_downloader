@@ -338,4 +338,5 @@ For a full traceback on unexpected errors, re-run with `-v`.
   design reference for restoring a protected sample entry (the `frma`/`sinf` strip) that let
   us drop the external `mp4decrypt` dependency, and the reference for the pure-Python MP4
   (de)muxer.
+- **[unshackle-services](https://github.com/n0stal6ic/unshackle-services)** — helping me implement playready support
 - **Amazon** — for using a **secure** DRM.
